@@ -1,0 +1,222 @@
+{% extends "base.html" %}
+
+{% block title %}Review Edits - Wikipedia Citation Assistant{% endblock %}
+
+{% block content %}
+<div style="margin-bottom: 20px;">
+    <a href="/" class="btn btn-secondary">← Back to Queue</a>
+</div>
+
+<div id="error" class="error" style="display: none;"></div>
+<div id="success" class="success" style="display: none;"></div>
+<div id="loading" class="loading">Loading proposal...</div>
+
+<div id="proposal-content" style="display: none;">
+    <div class="card">
+        <h2 id="article-title"></h2>
+        <p>
+            <a id="article-url" href="#" target="_blank">View on Wikipedia</a>
+        </p>
+    </div>
+
+    <div class="card">
+        <h3>Proposed Edits (<span id="edit-count">0</span> total, <span id="approved-count">0</span> approved)</h3>
+        <div id="edits-list"></div>
+    </div>
+
+    <div class="card">
+        <h3>Full Diff Preview</h3>
+        <button class="btn btn-secondary" onclick="loadPreview()">Show Combined Diff</button>
+        <pre id="diff-preview" style="display: none; margin-top: 15px;"></pre>
+    </div>
+
+    <div class="card">
+        <h3>Actions</h3>
+        <div class="actions">
+            <button class="btn btn-success" onclick="pushEdits()">Apply Selected Edits & Push to Wikipedia</button>
+            <button class="btn btn-danger" onclick="rejectAll()">Reject All</button>
+        </div>
+    </div>
+</div>
+
+<script>
+    const proposalId = '{{ proposal_id }}';
+    let proposal = null;
+
+    async function loadProposal() {
+        const loadingDiv = document.getElementById('loading');
+        const contentDiv = document.getElementById('proposal-content');
+        const errorDiv = document.getElementById('error');
+
+        try {
+            const response = await fetch(`/api/proposals/${proposalId}`);
+            const data = await response.json();
+
+            if (!response.ok) {
+                throw new Error(data.error || 'Failed to load proposal');
+            }
+
+            proposal = data;
+
+            // Update UI
+            document.getElementById('article-title').textContent = proposal.article.title;
+            document.getElementById('article-url').href = proposal.article.url;
+
+            renderEdits();
+
+            loadingDiv.style.display = 'none';
+            contentDiv.style.display = 'block';
+        } catch (error) {
+            errorDiv.textContent = 'Error: ' + error.message;
+            errorDiv.style.display = 'block';
+            loadingDiv.style.display = 'none';
+        }
+    }
+
+    function renderEdits() {
+        const listDiv = document.getElementById('edits-list');
+        const edits = proposal.edits;
+
+        document.getElementById('edit-count').textContent = edits.length;
+        document.getElementById('approved-count').textContent =
+            edits.filter(e => e.approved === true).length;
+
+        listDiv.innerHTML = edits.map((edit, index) => `
+            <div class="edit-item" id="edit-${index}">
+                <div class="edit-header">
+                    <div>
+                        <span class="edit-type ${edit.edit_type}">${edit.edit_type}</span>
+                        <span class="confidence ${edit.confidence}">${edit.confidence} confidence</span>
+                    </div>
+                    <div class="actions">
+                        <button class="btn ${edit.approved === true ? 'btn-success' : 'btn-secondary'}"
+                                onclick="approveEdit(${index})"
+                                id="approve-btn-${index}">
+                            ${edit.approved === true ? '✓ Approved' : 'Approve'}
+                        </button>
+                        <button class="btn ${edit.approved === false ? 'btn-danger' : 'btn-secondary'}"
+                                onclick="rejectEdit(${index})"
+                                id="reject-btn-${index}">
+                            ${edit.approved === false ? '✗ Rejected' : 'Reject'}
+                        </button>
+                    </div>
+                </div>
+
+                <div class="diff-view">
+                    <div class="diff-removed">- ${escapeHtml(edit.original_text)}</div>
+                    <div class="diff-added">+ ${escapeHtml(edit.proposed_text)}</div>
+                </div>
+
+                <p><strong>Rationale:</strong> ${escapeHtml(edit.rationale)}</p>
+                ${edit.policy_reference ? `<p><strong>Policy:</strong> <a href="https://en.wikipedia.org/wiki/${edit.policy_reference}" target="_blank">${edit.policy_reference}</a></p>` : ''}
+            </div>
+        `).join('');
+    }
+
+    async function approveEdit(index) {
+        try {
+            const response = await fetch(`/api/proposals/${proposalId}/approve-edit/${index}`, {
+                method: 'POST'
+            });
+
+            if (response.ok) {
+                proposal.edits[index].approved = true;
+                renderEdits();
+            }
+        } catch (error) {
+            showError('Failed to approve edit: ' + error.message);
+        }
+    }
+
+    async function rejectEdit(index) {
+        try {
+            const response = await fetch(`/api/proposals/${proposalId}/reject-edit/${index}`, {
+                method: 'POST'
+            });
+
+            if (response.ok) {
+                proposal.edits[index].approved = false;
+                renderEdits();
+            }
+        } catch (error) {
+            showError('Failed to reject edit: ' + error.message);
+        }
+    }
+
+    function rejectAll() {
+        if (confirm('Are you sure you want to reject all edits?')) {
+            proposal.edits.forEach((_, index) => rejectEdit(index));
+        }
+    }
+
+    async function loadPreview() {
+        const previewDiv = document.getElementById('diff-preview');
+
+        try {
+            const response = await fetch(`/api/proposals/${proposalId}/preview`);
+            const data = await response.json();
+
+            previewDiv.textContent = data.diff;
+            previewDiv.style.display = 'block';
+        } catch (error) {
+            showError('Failed to load preview: ' + error.message);
+        }
+    }
+
+    async function pushEdits() {
+        const approvedCount = proposal.edits.filter(e => e.approved === true).length;
+
+        if (approvedCount === 0) {
+            showError('No edits approved. Please approve at least one edit.');
+            return;
+        }
+
+        if (!confirm(`Push ${approvedCount} approved edit(s) to Wikipedia?`)) {
+            return;
+        }
+
+        try {
+            const response = await fetch(`/api/proposals/${proposalId}/push`, {
+                method: 'POST'
+            });
+
+            const data = await response.json();
+
+            if (response.ok) {
+                showSuccess(data.message);
+                setTimeout(() => {
+                    window.location.href = '/';
+                }, 2000);
+            } else {
+                showError(data.error || 'Failed to push edits');
+            }
+        } catch (error) {
+            showError('Error: ' + error.message);
+        }
+    }
+
+    function showError(message) {
+        const errorDiv = document.getElementById('error');
+        errorDiv.textContent = message;
+        errorDiv.style.display = 'block';
+        setTimeout(() => {
+            errorDiv.style.display = 'none';
+        }, 5000);
+    }
+
+    function showSuccess(message) {
+        const successDiv = document.getElementById('success');
+        successDiv.textContent = message;
+        successDiv.style.display = 'block';
+    }
+
+    function escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+
+    // Load proposal on page load
+    loadProposal();
+</script>
+{% endblock %}
