@@ -1,0 +1,39 @@
+# Core dependencies
+anthropic>=0.34.0
+pydantic>=2.0.0
+pydantic-settings>=2.0.0
+
+# Wikipedia API
+mwclient>=0.10.1
+mwparserfromhell>=0.6.4
+
+# Web framework for GUI
+flask>=3.0.0
+flask-cors>=4.0.0
+
+# Source finding
+requests>=2.31.0
+beautifulsoup4>=4.12.0
+scholarly>=1.7.11
+
+# Text processing
+nltk>=3.8.1
+difflib-parser>=0.1.0
+
+# Data persistence
+sqlalchemy>=2.0.0
+alembic>=1.12.0
+
+# Configuration
+pyyaml>=6.0.1
+python-dotenv>=1.0.0
+
+# Testing
+pytest>=7.4.0
+pytest-asyncio>=0.21.0
+pytest-mock>=3.11.0
+
+# Type checking
+mypy>=1.5.0
+types-requests
+types-pyyaml

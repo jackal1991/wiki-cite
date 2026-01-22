@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+
+{% block title %}Review Queue - Wikipedia Citation Assistant{% endblock %}
+
+{% block content %}
+<div class="card">
+    <h2>Edit Review Queue</h2>
+    <p>Review and approve suggested edits to Wikipedia articles.</p>
+    <div style="margin-top: 20px;">
+        <button class="btn" onclick="fetchNewArticle()">Fetch New Article</button>
+    </div>
+</div>
+
+<div id="loading" class="loading" style="display: none;">
+    Loading proposals...
+</div>
+
+<div id="error" class="error" style="display: none;"></div>
+
+<div id="proposals-list"></div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    async function fetchNewArticle() {
+        const loadingDiv = document.getElementById('loading');
+        const errorDiv = document.getElementById('error');
+
+        loadingDiv.style.display = 'block';
+        errorDiv.style.display = 'none';
+
+        try {
+            const response = await fetch('/api/fetch-article');
+            const data = await response.json();
+
+            if (response.ok) {
+                // Redirect to review page
+                window.location.href = `/review/${data.proposal_id}`;
+            } else {
+                errorDiv.textContent = data.error || 'Failed to fetch article';
+                errorDiv.style.display = 'block';
+            }
+        } catch (error) {
+            errorDiv.textContent = 'Error: ' + error.message;
+            errorDiv.style.display = 'block';
+        } finally {
+            loadingDiv.style.display = 'none';
+        }
+    }
+
+    async function loadProposals() {
+        const listDiv = document.getElementById('proposals-list');
+        const loadingDiv = document.getElementById('loading');
+
+        loadingDiv.style.display = 'block';
+
+        try {
+            const response = await fetch('/api/proposals');
+            const proposals = await response.json();
+
+            if (proposals.length === 0) {
+                listDiv.innerHTML = '<div class="card"><p>No proposals yet. Click "Fetch New Article" to get started.</p></div>';
+            } else {
+                listDiv.innerHTML = proposals.map(p => `
+                    <div class="card">
+                        <h3><a href="${p.url}" target="_blank">${p.title}</a></h3>
+                        <p>
+                            Status: <span class="status-${p.status}">${p.status}</span> |
+                            Edits: ${p.edit_count} |
+                            Approved: ${p.approved_count}
+                        </p>
+                        <p style="font-size: 14px; color: #72777d;">
+                            Created: ${new Date(p.created_at).toLocaleString()}
+                        </p>
+                        <div style="margin-top: 10px;">
+                            <a href="/review/${p.id}" class="btn btn-secondary">Review</a>
+                        </div>
+                    </div>
+                `).join('');
+            }
+        } catch (error) {
+            listDiv.innerHTML = `<div class="error">Error loading proposals: ${error.message}</div>`;
+        } finally {
+            loadingDiv.style.display = 'none';
+        }
+    }
+
+    // Load proposals on page load
+    loadProposals();
+</script>
+{% endblock %}

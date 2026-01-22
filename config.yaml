@@ -1,0 +1,27 @@
+agent:
+  model: "claude-sonnet-4-20250514"
+  max_edits_per_article: 15
+
+guardrails:
+  max_new_words: 50           # Excluding citations/templates
+  max_content_removal_pct: 20
+  min_similarity_ratio: 0.85
+  skip_blp_articles: true
+
+sources:
+  search_apis:
+    - semantic_scholar
+    - crossref
+    - google_scholar
+  reliability_check: true
+
+wikipedia:
+  edit_summary_suffix: "(AI-assisted citation/cleanup, human-reviewed)"
+  rate_limit_edits_per_hour: 10
+  user_agent: "WikiCiteBot/1.0 (https://github.com/yourorg/wiki-cite; citation-cleanup-assistant)"
+
+article_selection:
+  category: "Category:Articles_lacking_sources"
+  max_body_lines: 4
+  exclude_blp: true
+  exclude_protected: true
