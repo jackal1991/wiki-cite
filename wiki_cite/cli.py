@@ -75,7 +75,7 @@ def cmd_web(args):
     print("Press Ctrl+C to stop.")
 
     app = create_app()
-    app.run(debug=args.debug, host=args.host, port=args.port)
+    app.run(debug=args.debug, host=args.host, port=args.port)  # pylint: disable=no-member
 
 
 def cmd_config(args):
@@ -117,57 +117,34 @@ def main():
     subparsers = parser.add_subparsers(dest="command", help="Command to run")
 
     # Fetch articles command
-    fetch_parser = subparsers.add_parser(
-        "fetch",
-        help="Fetch candidate articles for cleanup"
-    )
+    fetch_parser = subparsers.add_parser("fetch", help="Fetch candidate articles for cleanup")
     fetch_parser.add_argument(
-        "-l", "--limit",
+        "-l",
+        "--limit",
         type=int,
         default=10,
-        help="Maximum number of articles to fetch (default: 10)"
+        help="Maximum number of articles to fetch (default: 10)",
     )
     fetch_parser.set_defaults(func=cmd_fetch_articles)
 
     # Analyze article command
-    analyze_parser = subparsers.add_parser(
-        "analyze",
-        help="Analyze a specific article"
-    )
-    analyze_parser.add_argument(
-        "title",
-        help="Title of the Wikipedia article to analyze"
-    )
+    analyze_parser = subparsers.add_parser("analyze", help="Analyze a specific article")
+    analyze_parser.add_argument("title", help="Title of the Wikipedia article to analyze")
     analyze_parser.set_defaults(func=cmd_analyze_article)
 
     # Web interface command
-    web_parser = subparsers.add_parser(
-        "web",
-        help="Start the web interface"
+    web_parser = subparsers.add_parser("web", help="Start the web interface")
+    web_parser.add_argument(
+        "-p", "--port", type=int, default=5000, help="Port to run on (default: 5000)"
     )
     web_parser.add_argument(
-        "-p", "--port",
-        type=int,
-        default=5000,
-        help="Port to run on (default: 5000)"
+        "-H", "--host", default="0.0.0.0", help="Host to bind to (default: 0.0.0.0)"
     )
-    web_parser.add_argument(
-        "-H", "--host",
-        default="0.0.0.0",
-        help="Host to bind to (default: 0.0.0.0)"
-    )
-    web_parser.add_argument(
-        "-d", "--debug",
-        action="store_true",
-        help="Enable debug mode"
-    )
+    web_parser.add_argument("-d", "--debug", action="store_true", help="Enable debug mode")
     web_parser.set_defaults(func=cmd_web)
 
     # Config command
-    config_parser = subparsers.add_parser(
-        "config",
-        help="Show current configuration"
-    )
+    config_parser = subparsers.add_parser("config", help="Show current configuration")
     config_parser.set_defaults(func=cmd_config)
 
     # Parse arguments

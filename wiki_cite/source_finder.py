@@ -3,11 +3,9 @@ Source Finding service for discovering citations for existing claims.
 """
 
 import re
-from typing import Any
 from urllib.parse import urlparse
 
 import requests
-from bs4 import BeautifulSoup
 
 from wiki_cite.config import get_config
 from wiki_cite.models import ReliabilityRating, Source, SourceType
@@ -29,7 +27,6 @@ RELIABLE_SOURCES = {
     "doi.org": ReliabilityRating.GENERALLY_RELIABLE,
     "gov": ReliabilityRating.GENERALLY_RELIABLE,  # Government domains
     "edu": ReliabilityRating.GENERALLY_RELIABLE,  # Academic domains
-
     # Potentially unreliable
     "dailymail.co.uk": ReliabilityRating.POTENTIALLY_UNRELIABLE,
     "forbes.com": ReliabilityRating.SITUATIONALLY_RELIABLE,
@@ -46,9 +43,7 @@ class SourceFinder:
         """Initialize the source finder."""
         self.config = get_config()
         self.session = requests.Session()
-        self.session.headers.update({
-            "User-Agent": self.config.wikipedia.user_agent
-        })
+        self.session.headers.update({"User-Agent": self.config.wikipedia.user_agent})
 
     def check_reliability(self, url: str) -> ReliabilityRating:
         """Check the reliability of a source based on its domain.
@@ -111,26 +106,24 @@ class SourceFinder:
             except Exception:
                 return False
 
-    def search_google_scholar(self, query: str, max_results: int = 5) -> list[Source]:
+    def search_google_scholar(
+        self, query: str, max_results: int = 5
+    ) -> list[Source]:  # pylint: disable=unused-argument
         """Search Google Scholar for academic sources.
 
-        Note: This is a simplified implementation. In production, use
-        the scholarly library or an official API.
+        Note: This is a simplified placeholder implementation.
+        In production, use the scholarly library or an official API.
 
         Args:
-            query: The search query
-            max_results: Maximum number of results to return
+            query: The search query (currently unused)
+            max_results: Maximum number of results to return (currently unused)
 
         Returns:
-            List of Source objects
+            Empty list (placeholder implementation)
         """
-        sources = []
-
         # This is a placeholder - actual implementation would use
         # the scholarly library or Semantic Scholar API
-        # For now, return empty list
-
-        return sources
+        return []
 
     def search_semantic_scholar(self, query: str, max_results: int = 5) -> list[Source]:
         """Search Semantic Scholar for academic sources.
@@ -153,7 +146,7 @@ class SourceFinder:
             params = {
                 "query": query,
                 "limit": max_results,
-                "fields": "title,authors,year,doi,url,venue"
+                "fields": "title,authors,year,doi,url,venue",
             }
             headers = {"x-api-key": api_key} if api_key else {}
 
@@ -280,10 +273,7 @@ class SourceFinder:
 
         # Filter by reliability if configured
         if self.config.sources.reliability_check:
-            all_sources = [
-                s for s in all_sources
-                if s.reliability != ReliabilityRating.DEPRECATED
-            ]
+            all_sources = [s for s in all_sources if s.reliability != ReliabilityRating.DEPRECATED]
 
         # Sort by reliability (generally reliable first)
         reliability_order = {
@@ -308,7 +298,7 @@ class SourceFinder:
         text = re.sub(r"\{\{[^}]+\}\}", "", wikitext)
         text = re.sub(r"\[\[Category:[^\]]+\]\]", "", text)
         text = re.sub(r"<ref[^>]*>.*?</ref>", "", text, flags=re.DOTALL)
-        text = re.sub(r"<ref[^>]*/>" "", text)
+        text = re.sub(r"<ref[^>]*/>", "", text)
 
         # Remove wikilinks but keep the text
         text = re.sub(r"\[\[(?:[^|\]]+\|)?([^\]]+)\]\]", r"\1", text)

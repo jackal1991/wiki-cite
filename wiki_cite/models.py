@@ -10,6 +10,7 @@ from typing import Literal
 
 class EditType(Enum):
     """Types of edits that can be made to an article."""
+
     CITATION_ADDED = "citation"
     GRAMMAR_FIX = "grammar"
     STYLE_FIX = "style"
@@ -20,6 +21,7 @@ class EditType(Enum):
 
 class SourceType(Enum):
     """Types of sources that can be cited."""
+
     JOURNAL = "journal"
     NEWS = "news"
     BOOK = "book"
@@ -29,6 +31,7 @@ class SourceType(Enum):
 
 class ReliabilityRating(Enum):
     """Source reliability ratings per WP:RS."""
+
     GENERALLY_RELIABLE = "generally_reliable"
     SITUATIONALLY_RELIABLE = "situationally_reliable"
     POTENTIALLY_UNRELIABLE = "potentially_unreliable"
@@ -38,6 +41,7 @@ class ReliabilityRating(Enum):
 @dataclass
 class Source:
     """A source that can be cited in Wikipedia."""
+
     title: str
     url: str | None = None
     authors: list[str] = field(default_factory=list)
@@ -129,6 +133,7 @@ class Source:
 @dataclass
 class ProposedEdit:
     """A single proposed edit to an article."""
+
     edit_type: EditType
     original_text: str
     proposed_text: str
@@ -143,6 +148,7 @@ class ProposedEdit:
 @dataclass
 class CandidateArticle:
     """A Wikipedia article that is a candidate for cleanup."""
+
     title: str
     url: str
     wikitext: str
@@ -157,6 +163,7 @@ class CandidateArticle:
 @dataclass
 class Article:
     """Full representation of a Wikipedia article."""
+
     title: str
     url: str
     wikitext: str
@@ -167,6 +174,7 @@ class Article:
 @dataclass
 class EditProposal:
     """A complete proposal for editing an article."""
+
     id: str
     article: Article
     edits: list[ProposedEdit]
@@ -192,7 +200,9 @@ class EditProposal:
 
         parts = []
         if counts.get("citation"):
-            parts.append(f"added {counts['citation']} citation{'s' if counts['citation'] > 1 else ''}")
+            parts.append(
+                f"added {counts['citation']} citation{'s' if counts['citation'] > 1 else ''}"
+            )
         if counts.get("wikilink"):
             parts.append(f"{counts['wikilink']} wikilink{'s' if counts['wikilink'] > 1 else ''}")
         if counts.get("grammar"):

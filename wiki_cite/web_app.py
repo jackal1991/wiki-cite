@@ -2,12 +2,9 @@
 Flask web application for reviewing and approving article edits.
 """
 
-import json
 from datetime import datetime
-from pathlib import Path
-from typing import Any
 
-from flask import Flask, jsonify, redirect, render_template, request, session, url_for
+from flask import Flask, jsonify, render_template, request
 from flask_cors import CORS
 
 from wiki_cite.agent import ClaudeAgent
@@ -65,11 +62,13 @@ def create_app() -> Flask:
             # Store the proposal
             proposals[proposal.id] = proposal
 
-            return jsonify({
-                "proposal_id": proposal.id,
-                "article_title": article.title,
-                "edit_count": len(proposal.edits),
-            })
+            return jsonify(
+                {
+                    "proposal_id": proposal.id,
+                    "article_title": article.title,
+                    "edit_count": len(proposal.edits),
+                }
+            )
 
         except Exception as e:
             return jsonify({"error": str(e)}), 500
@@ -77,18 +76,20 @@ def create_app() -> Flask:
     @app.route("/api/proposals")
     def get_proposals():
         """Get all proposals."""
-        return jsonify([
-            {
-                "id": p.id,
-                "title": p.article.title,
-                "url": p.article.url,
-                "status": p.status,
-                "edit_count": len(p.edits),
-                "approved_count": len(p.get_approved_edits()),
-                "created_at": p.created_at.isoformat(),
-            }
-            for p in proposals.values()
-        ])
+        return jsonify(
+            [
+                {
+                    "id": p.id,
+                    "title": p.article.title,
+                    "url": p.article.url,
+                    "status": p.status,
+                    "edit_count": len(p.edits),
+                    "approved_count": len(p.get_approved_edits()),
+                    "created_at": p.created_at.isoformat(),
+                }
+                for p in proposals.values()
+            ]
+        )
 
     @app.route("/api/proposals/<proposal_id>")
     def get_proposal(proposal_id: str):
@@ -98,27 +99,29 @@ def create_app() -> Flask:
 
         proposal = proposals[proposal_id]
 
-        return jsonify({
-            "id": proposal.id,
-            "article": {
-                "title": proposal.article.title,
-                "url": proposal.article.url,
-                "wikitext": proposal.article.wikitext,
-            },
-            "edits": [
-                {
-                    "edit_type": edit.edit_type.value,
-                    "original_text": edit.original_text,
-                    "proposed_text": edit.proposed_text,
-                    "rationale": edit.rationale,
-                    "policy_reference": edit.policy_reference,
-                    "confidence": edit.confidence,
-                    "approved": edit.approved,
-                }
-                for edit in proposal.edits
-            ],
-            "status": proposal.status,
-        })
+        return jsonify(
+            {
+                "id": proposal.id,
+                "article": {
+                    "title": proposal.article.title,
+                    "url": proposal.article.url,
+                    "wikitext": proposal.article.wikitext,
+                },
+                "edits": [
+                    {
+                        "edit_type": edit.edit_type.value,
+                        "original_text": edit.original_text,
+                        "proposed_text": edit.proposed_text,
+                        "rationale": edit.rationale,
+                        "policy_reference": edit.policy_reference,
+                        "confidence": edit.confidence,
+                        "approved": edit.approved,
+                    }
+                    for edit in proposal.edits
+                ],
+                "status": proposal.status,
+            }
+        )
 
     @app.route("/api/proposals/<proposal_id>/approve-edit/<int:edit_index>", methods=["POST"])
     def approve_edit(proposal_id: str, edit_index: int):
@@ -191,8 +194,8 @@ def create_app() -> Flask:
             proposal.status = "pushed"
             proposal.reviewed_at = datetime.now()
             return jsonify({"success": True, "message": message})
-        else:
-            return jsonify({"error": message}), 500
+
+        return jsonify({"error": message}), 500
 
     @app.route("/api/proposals/<proposal_id>/preview")
     def preview_proposal(proposal_id: str):

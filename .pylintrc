@@ -1,0 +1,59 @@
+[MASTER]
+ignore=.git,__pycache__,build,dist,venv,.venv
+jobs=1
+persistent=yes
+suggestion-mode=yes
+
+[MESSAGES CONTROL]
+disable=
+    C0111,  # missing-docstring
+    C0103,  # invalid-name
+    R0903,  # too-few-public-methods
+    R0913,  # too-many-arguments
+    R0914,  # too-many-locals
+    W0212,  # protected-access (for testing)
+    W0511,  # fixme
+    C0301,  # line-too-long (handled by black)
+
+[REPORTS]
+output-format=text
+reports=no
+score=yes
+
+[REFACTORING]
+max-nested-blocks=5
+
+[BASIC]
+good-names=i,j,k,ex,_,id,f,e
+
+[FORMAT]
+max-line-length=100
+indent-string='    '
+
+[DESIGN]
+max-args=7
+max-attributes=10
+max-bool-expr=5
+max-branches=12
+max-locals=15
+max-parents=7
+max-public-methods=20
+max-returns=6
+max-statements=50
+min-public-methods=1
+
+[SIMILARITIES]
+min-similarity-lines=4
+ignore-comments=yes
+ignore-docstrings=yes
+ignore-imports=yes
+
+[TYPING]
+runtime-typing=no
+
+[VARIABLES]
+callbacks=cb_,_cb
+dummy-variables-rgx=_+$|(_[a-zA-Z0-9_]*[a-zA-Z0-9]+?$)|dummy|^ignored_|^unused_
+
+[IMPORTS]
+allow-wildcard-with-all=no

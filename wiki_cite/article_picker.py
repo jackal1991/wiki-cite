@@ -91,7 +91,11 @@ class ArticlePicker:
         text = re.sub(r"<ref[^>]*/>", "", text, flags=re.IGNORECASE)
 
         # Remove empty lines and count
-        lines = [line.strip() for line in text.split("\n") if line.strip() and not line.strip().startswith("==")]
+        lines = [
+            line.strip()
+            for line in text.split("\n")
+            if line.strip() and not line.strip().startswith("==")
+        ]
 
         return len(lines)
 
@@ -193,7 +197,7 @@ class ArticlePicker:
                 break
 
             # Check if this is a candidate
-            is_candidate, reason = self.is_candidate(page)
+            is_candidate, _ = self.is_candidate(page)
             if not is_candidate:
                 continue
 
@@ -206,8 +210,7 @@ class ArticlePicker:
                 # Check for infobox
                 wikicode = mwparserfromhell.parse(page_text)
                 has_infobox = any(
-                    "infobox" in str(t.name).lower()
-                    for t in wikicode.filter_templates()
+                    "infobox" in str(t.name).lower() for t in wikicode.filter_templates()
                 )
 
                 candidate = CandidateArticle(

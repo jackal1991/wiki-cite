@@ -9,6 +9,7 @@ from pathlib import Path
 
 # Add parent directory to path for imports
 import sys
+
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from wiki_cite.agent import ClaudeAgent
@@ -114,6 +115,7 @@ def main():
     except Exception as e:
         print(f"\nError: {e}")
         import traceback
+
         traceback.print_exc()
 
 

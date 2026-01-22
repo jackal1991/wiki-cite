@@ -50,7 +50,7 @@ def test_validate_minimal_edit(guardrails):
         original_text="The cat are sleeping",
         proposed_text="The cat is sleeping",
         rationale="Subject-verb agreement",
-        confidence="high"
+        confidence="high",
     )
 
     is_valid, reason = guardrails.validate_edit(edit, "", "")
@@ -64,7 +64,7 @@ def test_reject_large_edit(guardrails):
         original_text="Short text",
         proposed_text="This is a much longer piece of text that adds substantial new content beyond what should be allowed",
         rationale="Style improvement",
-        confidence="medium"
+        confidence="medium",
     )
 
     is_valid, reason = guardrails.validate_edit(edit, "", "")

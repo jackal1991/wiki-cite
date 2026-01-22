@@ -59,10 +59,7 @@ class WikipediaPushService:
             # Login if credentials provided
             if self.config.wikipedia_username and self.config.wikipedia_password:
                 try:
-                    self.site.login(
-                        self.config.wikipedia_username,
-                        self.config.wikipedia_password
-                    )
+                    self.site.login(self.config.wikipedia_username, self.config.wikipedia_password)
                 except Exception as e:
                     print(f"Failed to login to Wikipedia: {e}")
 
@@ -102,7 +99,10 @@ class WikipediaPushService:
 
         # Check for edit conflicts
         if self.check_for_conflicts(proposal.article.title, proposal.article.revision_id):
-            return False, "Edit conflict: article has been modified since analysis. Please re-analyze."
+            return (
+                False,
+                "Edit conflict: article has been modified since analysis. Please re-analyze.",
+            )
 
         # Generate edit summary
         edit_summary = proposal.get_edit_summary()
@@ -121,7 +121,7 @@ class WikipediaPushService:
                 modified_text,
                 summary=edit_summary,
                 minor=True,  # Mark as minor edit
-                bot=True,    # Mark as bot edit if logged in as bot
+                bot=True,  # Mark as bot edit if logged in as bot
             )
 
             # Record the edit for rate limiting
@@ -152,7 +152,7 @@ class WikipediaPushService:
             modified_lines,
             fromfile=f"{proposal.article.title} (original)",
             tofile=f"{proposal.article.title} (modified)",
-            lineterm=""
+            lineterm="",
         )
 
         return "\n".join(diff)

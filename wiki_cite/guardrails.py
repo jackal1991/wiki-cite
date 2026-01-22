@@ -4,7 +4,6 @@ Edit Guardrails and validation for ensuring edits are minimal and safe.
 
 import difflib
 import re
-from typing import Any
 
 import mwparserfromhell
 
@@ -32,7 +31,7 @@ class EditGuardrails:
         cleaned = re.sub(r"\{\{[^}]+\}\}", "", text)
         # Remove ref tags
         cleaned = re.sub(r"<ref[^>]*>.*?</ref>", "", cleaned, flags=re.DOTALL)
-        cleaned = re.sub(r"<ref[^>]*/>" "", cleaned)
+        cleaned = re.sub(r"<ref[^>]*/>", "", cleaned)
         # Remove wikilinks but keep text
         cleaned = re.sub(r"\[\[(?:[^|\]]+\|)?([^\]]+)\]\]", r"\1", cleaned)
         # Count words
@@ -97,13 +96,15 @@ class EditGuardrails:
 
         return False
 
-    def validate_edit(self, edit: ProposedEdit, full_original: str, full_modified: str) -> tuple[bool, str]:
+    def validate_edit(
+        self, edit: ProposedEdit, full_original: str, full_modified: str
+    ) -> tuple[bool, str]:  # pylint: disable=unused-argument
         """Validate that an edit meets all guardrail requirements.
 
         Args:
             edit: The proposed edit to validate
-            full_original: The full original article text
-            full_modified: The full modified article text (with this edit applied)
+            full_original: The full original article text (reserved for future use)
+            full_modified: The full modified article text (reserved for future use)
 
         Returns:
             Tuple of (is_valid, reason_if_invalid)
@@ -177,8 +178,15 @@ class EditGuardrails:
 
         # Check for promotional language
         promotional_words = [
-            "best", "greatest", "leading", "premier", "top-rated",
-            "award-winning", "world-class", "cutting-edge", "revolutionary"
+            "best",
+            "greatest",
+            "leading",
+            "premier",
+            "top-rated",
+            "award-winning",
+            "world-class",
+            "cutting-edge",
+            "revolutionary",
         ]
         text_lower = text.lower()
         for word in promotional_words:
@@ -187,8 +195,13 @@ class EditGuardrails:
 
         # Check for peacock terms
         peacock_terms = [
-            "clearly", "obviously", "undoubtedly", "of course",
-            "naturally", "essentially", "basically"
+            "clearly",
+            "obviously",
+            "undoubtedly",
+            "of course",
+            "naturally",
+            "essentially",
+            "basically",
         ]
         for term in peacock_terms:
             if term in text_lower:
@@ -196,8 +209,12 @@ class EditGuardrails:
 
         # Check for weasel words
         weasel_words = [
-            "some say", "many believe", "it is said", "critics say",
-            "experts claim", "arguably"
+            "some say",
+            "many believe",
+            "it is said",
+            "critics say",
+            "experts claim",
+            "arguably",
         ]
         for weasel in weasel_words:
             if weasel in text_lower:
