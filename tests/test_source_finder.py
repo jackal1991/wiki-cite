@@ -3,7 +3,7 @@
 import pytest
 from unittest.mock import Mock, patch
 
-from wiki_cite.source_finder import SourceFinder, ReliabilityRating
+from wiki_cite.source_finder import SourceFinder, ReliabilityRating, extract_citation_url
 from wiki_cite.models import Source, SourceType
 
 
@@ -122,6 +122,107 @@ def test_search_crossref_without_email(source_finder):
 
     sources = source_finder.search_crossref("test query")
     assert sources == []
+
+
+def test_search_web_without_api_key(source_finder):
+    """Test that web search returns empty without an API key."""
+    source_finder.config.brave_api_key = ""
+
+    sources = source_finder.search_web("test query")
+    assert sources == []
+
+
+def test_search_web_with_api_key(source_finder):
+    """Test that web search parses Brave results into Source objects."""
+    source_finder.config.brave_api_key = "test-key"
+
+    with patch.object(source_finder.session, "get") as mock_get:
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "web": {
+                "results": [
+                    {
+                        "title": "Example Article",
+                        "url": "https://www.nytimes.com/example",
+                        "profile": {"name": "The New York Times"},
+                    }
+                ]
+            }
+        }
+        mock_get.return_value = mock_response
+
+        sources = source_finder.search_web("test claim")
+
+        assert len(sources) == 1
+        assert sources[0].title == "Example Article"
+        assert sources[0].url == "https://www.nytimes.com/example"
+        assert sources[0].reliability == ReliabilityRating.GENERALLY_RELIABLE
+
+
+def test_fetch_page_preview_no_url(source_finder):
+    """Test that preview fetching handles a missing URL gracefully."""
+    preview = source_finder.fetch_page_preview("")
+    assert preview["ok"] is False
+    assert preview["error"]
+
+
+def test_fetch_page_preview_extracts_metadata(source_finder):
+    """Test that preview fetching extracts title/description from HTML."""
+    html = b"""
+    <html><head>
+        <title>Fallback Title</title>
+        <meta property="og:title" content="Example Page Title">
+        <meta property="og:description" content="An example description.">
+        <meta property="og:site_name" content="Example Site">
+    </head><body></body></html>
+    """
+
+    with patch.object(source_finder.session, "get") as mock_get:
+        mock_response = Mock()
+        mock_response.headers = {"Content-Type": "text/html; charset=utf-8"}
+        mock_response.raw.read.return_value = html
+        mock_get.return_value = mock_response
+
+        preview = source_finder.fetch_page_preview("https://example.com/article")
+
+        assert preview["ok"] is True
+        assert preview["title"] == "Example Page Title"
+        assert preview["description"] == "An example description."
+        assert preview["site_name"] == "Example Site"
+
+
+def test_fetch_page_preview_rejects_non_html(source_finder):
+    """Test that preview fetching skips non-HTML content types."""
+    with patch.object(source_finder.session, "get") as mock_get:
+        mock_response = Mock()
+        mock_response.headers = {"Content-Type": "application/pdf"}
+        mock_get.return_value = mock_response
+
+        preview = source_finder.fetch_page_preview("https://example.com/paper.pdf")
+
+        assert preview["ok"] is False
+        assert "PDF" in preview["error"] or "pdf" in preview["error"]
+
+
+def test_extract_citation_url_from_cite_template():
+    """Test extracting a URL from a {{cite web}} template."""
+    text = (
+        "were accused<ref>{{cite web |title=Test |url=https://example.com/page |date=2020}}</ref>"
+    )
+    assert extract_citation_url(text) == "https://example.com/page"
+
+
+def test_extract_citation_url_from_bare_url():
+    """Test extracting a bare URL when no citation template is present."""
+    text = "See https://example.com/source for details."
+    assert extract_citation_url(text) == "https://example.com/source"
+
+
+def test_extract_citation_url_returns_none_when_absent():
+    """Test that extraction returns None when there's no URL."""
+    text = "Fixed grammar, no citation here."
+    assert extract_citation_url(text) is None
 
 
 def test_find_sources_for_claim_returns_sorted(source_finder):

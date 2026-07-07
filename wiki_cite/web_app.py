@@ -11,6 +11,7 @@ from wiki_cite.agent import ClaudeAgent
 from wiki_cite.article_picker import ArticlePicker
 from wiki_cite.config import get_config
 from wiki_cite.models import Article, EditProposal
+from wiki_cite.source_finder import SourceFinder, extract_citation_url
 from wiki_cite.wikipedia_push import WikipediaPushService
 
 
@@ -29,6 +30,7 @@ def create_app() -> Flask:
     article_picker = ArticlePicker()
     agent = ClaudeAgent()
     push_service = WikipediaPushService()
+    source_finder = SourceFinder()
 
     @app.route("/")
     def index():
@@ -122,6 +124,30 @@ def create_app() -> Flask:
                 "status": proposal.status,
             }
         )
+
+    @app.route("/api/proposals/<proposal_id>/edits/<int:edit_index>/source-preview")
+    def source_preview(proposal_id: str, edit_index: int):
+        """Fetch a preview (title/description/site) of the source cited by an edit.
+
+        Lets a reviewer sanity-check what the citation actually points to
+        without leaving the dashboard.
+        """
+        if proposal_id not in proposals:
+            return jsonify({"error": "Proposal not found"}), 404
+
+        proposal = proposals[proposal_id]
+
+        if edit_index < 0 or edit_index >= len(proposal.edits):
+            return jsonify({"error": "Invalid edit index"}), 400
+
+        edit = proposal.edits[edit_index]
+        source_url = extract_citation_url(edit.proposed_text)
+
+        if not source_url:
+            return jsonify({"ok": False, "error": "No source URL found in this edit"})
+
+        preview = source_finder.fetch_page_preview(source_url)
+        return jsonify(preview)
 
     @app.route("/api/proposals/<proposal_id>/approve-edit/<int:edit_index>", methods=["POST"])
     def approve_edit(proposal_id: str, edit_index: int):

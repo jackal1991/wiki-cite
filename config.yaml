@@ -12,7 +12,7 @@ sources:
   search_apis:
     - semantic_scholar
     - crossref
-    - google_scholar
+    - web_search       # general web/news search via Brave Search API (BRAVE_API_KEY)
   reliability_check: true
 
 wikipedia:

@@ -5,11 +5,12 @@ Source Finding service for discovering citations for existing claims.
 import re
 from urllib.parse import urlparse
 
+import mwparserfromhell
 import requests
+from bs4 import BeautifulSoup
 
 from wiki_cite.config import get_config
 from wiki_cite.models import ReliabilityRating, Source, SourceType
-
 
 # Wikipedia's Reliable Sources Perennial (simplified version)
 # In production, this should be fetched from WP:RSP
@@ -34,6 +35,34 @@ RELIABLE_SOURCES = {
     "wordpress.com": ReliabilityRating.POTENTIALLY_UNRELIABLE,
     "blogspot.com": ReliabilityRating.POTENTIALLY_UNRELIABLE,
 }
+
+
+def extract_citation_url(text: str) -> str | None:
+    """Extract the source URL from a wikitext snippet containing a citation.
+
+    Looks for a |url= parameter inside a {{cite ...}} template first, then
+    falls back to the first bare URL found in the text.
+
+    Args:
+        text: Wikitext, typically a proposed edit's inserted <ref>/{{cite}} markup
+
+    Returns:
+        The extracted URL, or None if no URL was found
+    """
+    wikicode = mwparserfromhell.parse(text)
+    for template in wikicode.filter_templates():
+        if template.name.strip().lower().startswith("cite"):
+            for param_name in ("url", "URL"):
+                if template.has(param_name):
+                    value = str(template.get(param_name).value).strip()
+                    if value:
+                        return value
+
+    bare_url_match = re.search(r"https?://[^\s|}\]<>\"']+", text)
+    if bare_url_match:
+        return bare_url_match.group(0)
+
+    return None
 
 
 class SourceFinder:
@@ -249,6 +278,109 @@ class SourceFinder:
 
         return sources
 
+    def search_web(self, query: str, max_results: int = 5) -> list[Source]:
+        """Search the general web (via Brave Search) for news/reference sources.
+
+        Unlike the academic APIs, this can find sources for everyday claims
+        (biographical facts, events, places) that never appear in scholarly databases.
+
+        Args:
+            query: The search query
+            max_results: Maximum number of results to return
+
+        Returns:
+            List of Source objects
+        """
+        sources = []
+
+        api_key = self.config.brave_api_key
+        if not api_key:
+            return sources
+
+        try:
+            url = "https://api.search.brave.com/res/v1/web/search"
+            params = {"q": query, "count": max_results}
+            headers = {"Accept": "application/json", "X-Subscription-Token": api_key}
+
+            response = self.session.get(url, params=params, headers=headers, timeout=10)
+            if response.status_code == 200:
+                data = response.json()
+
+                for result in data.get("web", {}).get("results", [])[:max_results]:
+                    result_url = result.get("url", "")
+                    source = Source(
+                        title=result.get("title", ""),
+                        url=result_url,
+                        publication_date=result.get("page_age") or result.get("age"),
+                        publisher=result.get("profile", {}).get("name")
+                        or urlparse(result_url).netloc,
+                        source_type=SourceType.NEWS if "news" in query.lower() else SourceType.WEB,
+                        reliability=self.check_reliability(result_url),
+                    )
+                    sources.append(source)
+
+        except Exception as e:
+            print(f"Error searching web: {e}")
+
+        return sources
+
+    def fetch_page_preview(self, url: str) -> dict:
+        """Fetch a lightweight preview of a source page for reviewer verification.
+
+        Args:
+            url: The source URL to preview
+
+        Returns:
+            Dict with title, description, site_name, image, url, and ok status
+        """
+        preview = {
+            "url": url,
+            "ok": False,
+            "title": None,
+            "description": None,
+            "site_name": urlparse(url).netloc.replace("www.", "") if url else None,
+            "image": None,
+            "error": None,
+        }
+
+        if not url:
+            preview["error"] = "No URL provided"
+            return preview
+
+        try:
+            response = self.session.get(url, timeout=10, allow_redirects=True, stream=True)
+            content_type = response.headers.get("Content-Type", "")
+            if "text/html" not in content_type:
+                preview["error"] = f"Not an HTML page ({content_type or 'unknown type'})"
+                return preview
+
+            # Only read the first portion of the page; head metadata lives early in the document
+            html = response.raw.read(200_000, decode_content=True)
+            soup = BeautifulSoup(html, "html.parser")
+
+            def meta(*names: str) -> str | None:
+                for name in names:
+                    tag = soup.find("meta", attrs={"property": name}) or soup.find(
+                        "meta", attrs={"name": name}
+                    )
+                    if tag and tag.get("content"):
+                        return tag["content"].strip()
+                return None
+
+            title_tag = soup.find("title")
+            preview["title"] = meta("og:title") or (title_tag.text.strip() if title_tag else None)
+            preview["description"] = meta("og:description", "description")
+            preview["site_name"] = meta("og:site_name") or preview["site_name"]
+            preview["image"] = meta("og:image")
+            preview["ok"] = bool(preview["title"] or preview["description"])
+            if not preview["ok"]:
+                preview["error"] = "Could not extract page metadata"
+
+        except Exception as e:
+            preview["error"] = str(e)
+
+        return preview
+
     def find_sources_for_claim(self, claim: str, max_results: int = 5) -> list[Source]:
         """Find sources that might verify a claim.
 
@@ -267,6 +399,9 @@ class SourceFinder:
 
         if "crossref" in self.config.sources.search_apis:
             all_sources.extend(self.search_crossref(claim, max_results))
+
+        if "web_search" in self.config.sources.search_apis:
+            all_sources.extend(self.search_web(claim, max_results))
 
         if "google_scholar" in self.config.sources.search_apis:
             all_sources.extend(self.search_google_scholar(claim, max_results))

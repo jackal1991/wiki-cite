@@ -109,8 +109,42 @@
 
                 <p><strong>Rationale:</strong> ${escapeHtml(edit.rationale)}</p>
                 ${edit.policy_reference ? `<p><strong>Policy:</strong> <a href="https://en.wikipedia.org/wiki/${edit.policy_reference}" target="_blank">${edit.policy_reference}</a></p>` : ''}
+                ${edit.edit_type === 'citation' ? `
+                <div class="source-preview" id="source-preview-${index}">
+                    <button class="btn btn-secondary" onclick="loadSourcePreview(${index})">Preview Source</button>
+                    <div id="source-preview-content-${index}"></div>
+                </div>
+                ` : ''}
             </div>
         `).join('');
+    }
+
+    async function loadSourcePreview(index) {
+        const contentDiv = document.getElementById(`source-preview-content-${index}`);
+        contentDiv.innerHTML = '<p style="color: #72777d; margin-top: 10px;">Loading source preview...</p>';
+
+        try {
+            const response = await fetch(`/api/proposals/${proposalId}/edits/${index}/source-preview`);
+            const data = await response.json();
+
+            if (!data.ok) {
+                contentDiv.innerHTML = `<p class="error" style="margin-top: 10px;">${escapeHtml(data.error || 'Preview unavailable')}</p>`;
+                return;
+            }
+
+            contentDiv.innerHTML = `
+                <div class="source-card">
+                    ${data.image ? `<img src="${escapeHtml(data.image)}" alt="" class="source-card-image">` : ''}
+                    <div class="source-card-body">
+                        <div class="source-card-site">${escapeHtml(data.site_name || '')}</div>
+                        <a href="${escapeHtml(data.url)}" target="_blank" class="source-card-title">${escapeHtml(data.title || data.url)}</a>
+                        ${data.description ? `<p class="source-card-desc">${escapeHtml(data.description)}</p>` : ''}
+                    </div>
+                </div>
+            `;
+        } catch (error) {
+            contentDiv.innerHTML = `<p class="error" style="margin-top: 10px;">Failed to load preview: ${escapeHtml(error.message)}</p>`;
+        }
     }
 
     async function approveEdit(index) {

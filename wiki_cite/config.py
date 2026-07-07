@@ -29,7 +29,7 @@ class SourcesConfig(BaseSettings):
     """Configuration for source finding."""
 
     search_apis: list[str] = Field(
-        default_factory=lambda: ["semantic_scholar", "crossref", "google_scholar"]
+        default_factory=lambda: ["semantic_scholar", "crossref", "web_search"]
     )
     reliability_check: bool = True
 
@@ -70,6 +70,7 @@ class Config(BaseSettings):
     wikipedia_password: str = Field(default="", alias="WIKIPEDIA_PASSWORD")
     semantic_scholar_api_key: str = Field(default="", alias="SEMANTIC_SCHOLAR_API_KEY")
     crossref_email: str = Field(default="", alias="CROSSREF_EMAIL")
+    brave_api_key: str = Field(default="", alias="BRAVE_API_KEY")
     flask_secret_key: str = Field(default="dev-secret-key", alias="FLASK_SECRET_KEY")
 
     @classmethod
