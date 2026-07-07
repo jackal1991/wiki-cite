@@ -26,6 +26,7 @@
         const loadingDiv = document.getElementById('loading');
         const errorDiv = document.getElementById('error');
 
+        loadingDiv.textContent = 'Scanning candidate articles for one we can confidently source (this may check several before finding a match)...';
         loadingDiv.style.display = 'block';
         errorDiv.style.display = 'none';
 
@@ -37,7 +38,11 @@
                 // Redirect to review page
                 window.location.href = `/review/${data.proposal_id}`;
             } else {
-                errorDiv.textContent = data.error || 'Failed to fetch article';
+                let message = data.error || 'Failed to fetch article';
+                if (data.skipped && data.skipped.length) {
+                    message += ` (skipped: ${data.skipped.join(', ')})`;
+                }
+                errorDiv.textContent = message;
                 errorDiv.style.display = 'block';
             }
         } catch (error) {

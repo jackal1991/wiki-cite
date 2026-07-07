@@ -14,6 +14,7 @@ class AgentConfig(BaseSettings):
 
     model: str = "claude-sonnet-4-20250514"
     max_edits_per_article: int = 15
+    max_candidates_per_fetch: int = 20
 
 
 class GuardrailsConfig(BaseSettings):
