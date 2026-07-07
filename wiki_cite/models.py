@@ -187,6 +187,17 @@ class EditProposal:
         """Get only the edits that have been approved."""
         return [edit for edit in self.edits if edit.approved is True]
 
+    def has_confident_citation(self) -> bool:
+        """Check whether this proposal found at least one well-sourced citation.
+
+        Used to skip articles where no reliable source could be found, so the
+        reviewer isn't shown pages with nothing worth approving.
+        """
+        return any(
+            edit.edit_type == EditType.CITATION_ADDED and edit.confidence in ("high", "medium")
+            for edit in self.edits
+        )
+
     def get_edit_summary(self) -> str:
         """Generate a summary of approved edits for Wikipedia."""
         approved = self.get_approved_edits()

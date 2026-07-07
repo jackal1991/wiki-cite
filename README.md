@@ -29,9 +29,9 @@ This tool helps Wikipedia editors by automating the tedious work of:
 
 - **Article Picker**: Automatically finds stub articles that need citations
 - **Claude AI Agent**: Analyzes articles and proposes minimal edits
-- **Source Finder**: Searches academic databases for reliable sources
+- **Source Finder**: Searches academic databases (Semantic Scholar, CrossRef) and the general web (Brave Search) for reliable sources
 - **Edit Guardrails**: Ensures all edits remain minimal and policy-compliant
-- **Review GUI**: Web interface for human review of all proposed edits
+- **Review GUI**: Web interface for human review of all proposed edits, including a source preview (title/description/site) for each proposed citation
 - **Wikipedia Integration**: Pushes approved edits with proper attribution
 
 ## Installation
@@ -70,6 +70,7 @@ cp .env.example .env
 ANTHROPIC_API_KEY=your_api_key_here
 WIKIPEDIA_USERNAME=your_bot_username  # Optional
 WIKIPEDIA_PASSWORD=your_bot_password  # Optional
+BRAVE_API_KEY=your_brave_search_key   # Optional, enables general web/news source search
 ```
 
 ## Usage
@@ -140,6 +141,7 @@ Each edit shows:
 - **Diff**: Side-by-side view of original vs. proposed text
 - **Rationale**: Explanation for the change
 - **Policy Reference**: Link to relevant Wikipedia policy
+- **Source Preview** (citation edits only): On demand, fetches the title, description, and site name of the page being cited, so you can verify the source without leaving the dashboard
 
 ## Configuration
 
