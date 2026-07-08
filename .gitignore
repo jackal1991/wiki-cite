@@ -212,3 +212,4 @@ __marimo__/
 # Idempotency store (processed articles)
 wiki_cite_seen.db
 *.db
+.worktrees/
