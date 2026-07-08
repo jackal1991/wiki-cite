@@ -110,6 +110,21 @@ def create_app() -> Flask:
                 if proposal.has_confident_citation():
                     proposals[proposal.id] = proposal
                     seen_store.mark_seen(candidate.title, candidate.revision_id, "selected")
+                    for edit in proposal.edits:
+                        seen_store.record_outcome(
+                            candidate.title,
+                            candidate.revision_id,
+                            "proposed",
+                            categories=candidate.categories,
+                            body_line_count=candidate.body_line_count,
+                            has_infobox=candidate.has_infobox,
+                            citation_needed_count=len(candidate.citation_needed_claims),
+                            edit_type=edit.edit_type.value,
+                            confidence=edit.confidence,
+                            source_type=edit.source.source_type.value if edit.source else None,
+                            reliability=edit.source.reliability.value if edit.source and edit.source.reliability else None,
+                            policy_reference=edit.policy_reference,
+                        )
                     yield {
                         "type": "selected",
                         "proposal_id": proposal.id,
@@ -121,6 +136,15 @@ def create_app() -> Flask:
 
                 skipped.append(candidate.title)
                 seen_store.mark_seen(candidate.title, candidate.revision_id, "skipped")
+                seen_store.record_outcome(
+                    candidate.title,
+                    candidate.revision_id,
+                    "skipped",
+                    categories=candidate.categories,
+                    body_line_count=candidate.body_line_count,
+                    has_infobox=candidate.has_infobox,
+                    citation_needed_count=len(candidate.citation_needed_claims),
+                )
                 yield {"type": "skipped", "title": candidate.title, "reason": "no confidently-sourced citation", "edit_count": len(proposal.edits)}
 
             if not found_any:
@@ -351,6 +375,17 @@ def create_app() -> Flask:
             proposal.status = "pushed"
             proposal.reviewed_at = datetime.now()
             seen_store.mark_seen(proposal.article.title, proposal.article.revision_id, "pushed")
+            for edit in approved_edits:
+                seen_store.record_outcome(
+                    proposal.article.title,
+                    proposal.article.revision_id,
+                    "pushed",
+                    edit_type=edit.edit_type.value,
+                    confidence=edit.confidence,
+                    source_type=edit.source.source_type.value if edit.source else None,
+                    reliability=edit.source.reliability.value if edit.source and edit.source.reliability else None,
+                    policy_reference=edit.policy_reference,
+                )
             return jsonify({"success": True, "message": message})
 
         return jsonify({"error": message}), 500
