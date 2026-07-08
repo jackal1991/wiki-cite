@@ -96,9 +96,7 @@ class EditGuardrails:
 
         return False
 
-    def validate_edit(
-        self, edit: ProposedEdit, full_original: str, full_modified: str
-    ) -> tuple[bool, str]:  # pylint: disable=unused-argument
+    def validate_edit(self, edit: ProposedEdit, full_original: str, full_modified: str) -> tuple[bool, str]:  # pylint: disable=unused-argument
         """Validate that an edit meets all guardrail requirements.
 
         Args:

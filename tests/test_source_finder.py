@@ -207,9 +207,7 @@ def test_fetch_page_preview_rejects_non_html(source_finder):
 
 def test_extract_citation_url_from_cite_template():
     """Test extracting a URL from a {{cite web}} template."""
-    text = (
-        "were accused<ref>{{cite web |title=Test |url=https://example.com/page |date=2020}}</ref>"
-    )
+    text = "were accused<ref>{{cite web |title=Test |url=https://example.com/page |date=2020}}</ref>"
     assert extract_citation_url(text) == "https://example.com/page"
 
 

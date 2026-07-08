@@ -1,7 +1,5 @@
 """Tests for data models."""
 
-import pytest
-
 from wiki_cite.models import (
     EditProposal,
     EditType,
@@ -136,9 +134,7 @@ def test_get_approved_edits():
 
 def test_has_confident_citation_true_for_high_confidence_citation():
     """Test that a proposal with a high-confidence citation edit is confident."""
-    article = Article(
-        title="Test Article", url="http://example.com", wikitext="Test content", revision_id="1"
-    )
+    article = Article(title="Test Article", url="http://example.com", wikitext="Test content", revision_id="1")
     edit = ProposedEdit(
         edit_type=EditType.CITATION_ADDED,
         original_text="test",
@@ -153,9 +149,7 @@ def test_has_confident_citation_true_for_high_confidence_citation():
 
 def test_has_confident_citation_false_for_low_confidence_citation():
     """Test that a proposal with only a low-confidence citation isn't confident."""
-    article = Article(
-        title="Test Article", url="http://example.com", wikitext="Test content", revision_id="1"
-    )
+    article = Article(title="Test Article", url="http://example.com", wikitext="Test content", revision_id="1")
     edit = ProposedEdit(
         edit_type=EditType.CITATION_ADDED,
         original_text="test",
@@ -170,9 +164,7 @@ def test_has_confident_citation_false_for_low_confidence_citation():
 
 def test_has_confident_citation_false_without_citation_edits():
     """Test that a proposal with only non-citation edits isn't confident."""
-    article = Article(
-        title="Test Article", url="http://example.com", wikitext="Test content", revision_id="1"
-    )
+    article = Article(title="Test Article", url="http://example.com", wikitext="Test content", revision_id="1")
     edit = ProposedEdit(
         edit_type=EditType.GRAMMAR_FIX,
         original_text="is",

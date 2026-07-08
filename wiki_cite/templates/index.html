@@ -1,32 +1,47 @@
 {% extends "base.html" %}
 
-{% block title %}Review Queue - Wikipedia Citation Assistant{% endblock %}
+{% block title %}Review Queue — WikiCite{% endblock %}
 
 {% block content %}
-<div class="card">
-    <h2>Edit Review Queue</h2>
-    <p>Review and approve suggested edits to Wikipedia articles.</p>
-    <div style="margin-top: 20px;">
-        <button class="btn" onclick="fetchNewArticle()">Fetch New Article</button>
+<main>
+    <div class="panel">
+        <div class="eyebrow">Review queue</div>
+        <h1 class="page-title">Minimal, sourced edits — <span class="accent">approved by you</span></h1>
+        <p class="lead">Each proposal fixes grammar, adds wikilinks, and cites claims already present in a stub article. Nothing new is written. You review every change before it reaches Wikipedia.</p>
+        <div style="margin-top:22px; display:flex; align-items:center; gap:16px; flex-wrap:wrap;">
+            <button class="btn-primary" id="fetch-btn" onclick="fetchNewArticle()">Fetch new article</button>
+            <span style="font-size:13px; color:#7a8271;">Scans stubs lacking sources · skips living persons &amp; protected pages</span>
+        </div>
     </div>
-</div>
 
-<div id="loading" class="loading" style="display: none;">
-    Loading proposals...
-</div>
+    <div id="error" class="banner error" style="display:none; margin-top:20px;"></div>
+    <div id="loading" class="loading" style="display:none;"></div>
 
-<div id="error" class="error" style="display: none;"></div>
+    <div class="section-head">
+        <h2>In your queue</h2>
+        <span class="muted" style="font-size:12.5px;"><span id="proposal-count">0</span> proposals</span>
+    </div>
 
-<div id="proposals-list"></div>
+    <div id="proposals-list"></div>
+</main>
 {% endblock %}
 
 {% block scripts %}
 <script>
+    function escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text == null ? '' : text;
+        return div.innerHTML;
+    }
+
     async function fetchNewArticle() {
         const loadingDiv = document.getElementById('loading');
         const errorDiv = document.getElementById('error');
+        const btn = document.getElementById('fetch-btn');
 
-        loadingDiv.textContent = 'Scanning candidate articles for one we can confidently source (this may check several before finding a match)...';
+        btn.disabled = true;
+        btn.classList.add('is-disabled');
+        loadingDiv.textContent = 'Scanning candidate articles for one we can confidently source (this may check several before finding a match)…';
         loadingDiv.style.display = 'block';
         errorDiv.style.display = 'none';
 
@@ -35,62 +50,67 @@
             const data = await response.json();
 
             if (response.ok) {
-                // Redirect to review page
                 window.location.href = `/review/${data.proposal_id}`;
-            } else {
-                let message = data.error || 'Failed to fetch article';
-                if (data.skipped && data.skipped.length) {
-                    message += ` (skipped: ${data.skipped.join(', ')})`;
-                }
-                errorDiv.textContent = message;
-                errorDiv.style.display = 'block';
+                return;
             }
+            let message = data.error || 'Failed to fetch article';
+            if (data.skipped && data.skipped.length) {
+                message += ` (skipped: ${data.skipped.join(', ')})`;
+            }
+            errorDiv.textContent = message;
+            errorDiv.style.display = 'block';
         } catch (error) {
             errorDiv.textContent = 'Error: ' + error.message;
             errorDiv.style.display = 'block';
         } finally {
             loadingDiv.style.display = 'none';
+            btn.disabled = false;
+            btn.classList.remove('is-disabled');
         }
+    }
+
+    function proposalCard(p) {
+        const isPushed = p.status === 'pushed';
+        const statusClass = isPushed ? 'status-pill pushed' : 'status-pill';
+        const created = p.created_at ? new Date(p.created_at).toLocaleString() : '';
+        return `
+            <div class="queue-item">
+                <div style="flex:1; min-width:0;">
+                    <div class="title-row">
+                        <a href="${escapeHtml(p.url)}" target="_blank" class="title-link">${escapeHtml(p.title)}</a>
+                        <span class="${statusClass}">${escapeHtml(p.status)}</span>
+                    </div>
+                    <div class="queue-meta">
+                        <span><strong>${p.edit_count}</strong> proposed edits</span>
+                        <span class="approved"><strong>${p.approved_count}</strong> approved</span>
+                        <span class="when">${escapeHtml(created)}</span>
+                    </div>
+                </div>
+                <a href="/review/${escapeHtml(p.id)}" class="btn-review">Review →</a>
+            </div>
+        `;
     }
 
     async function loadProposals() {
         const listDiv = document.getElementById('proposals-list');
-        const loadingDiv = document.getElementById('loading');
-
-        loadingDiv.style.display = 'block';
+        const countEl = document.getElementById('proposal-count');
 
         try {
             const response = await fetch('/api/proposals');
             const proposals = await response.json();
 
+            countEl.textContent = proposals.length;
+
             if (proposals.length === 0) {
-                listDiv.innerHTML = '<div class="card"><p>No proposals yet. Click "Fetch New Article" to get started.</p></div>';
-            } else {
-                listDiv.innerHTML = proposals.map(p => `
-                    <div class="card">
-                        <h3><a href="${p.url}" target="_blank">${p.title}</a></h3>
-                        <p>
-                            Status: <span class="status-${p.status}">${p.status}</span> |
-                            Edits: ${p.edit_count} |
-                            Approved: ${p.approved_count}
-                        </p>
-                        <p style="font-size: 14px; color: #72777d;">
-                            Created: ${new Date(p.created_at).toLocaleString()}
-                        </p>
-                        <div style="margin-top: 10px;">
-                            <a href="/review/${p.id}" class="btn btn-secondary">Review</a>
-                        </div>
-                    </div>
-                `).join('');
+                listDiv.innerHTML = '<div class="panel" style="text-align:center; color:#7a8271;">No proposals yet. Click <strong>Fetch new article</strong> to get started.</div>';
+                return;
             }
+            listDiv.innerHTML = proposals.map(proposalCard).join('');
         } catch (error) {
-            listDiv.innerHTML = `<div class="error">Error loading proposals: ${error.message}</div>`;
-        } finally {
-            loadingDiv.style.display = 'none';
+            listDiv.innerHTML = `<div class="banner error">Error loading proposals: ${escapeHtml(error.message)}</div>`;
         }
     }
 
-    // Load proposals on page load
     loadProposals();
 </script>
 {% endblock %}

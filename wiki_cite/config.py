@@ -12,7 +12,7 @@ from pydantic_settings import BaseSettings
 class AgentConfig(BaseSettings):
     """Configuration for the Claude agent."""
 
-    model: str = "claude-sonnet-4-20250514"
+    model: str = "claude-sonnet-5"
     max_edits_per_article: int = 15
     max_candidates_per_fetch: int = 20
 
@@ -29,9 +29,7 @@ class GuardrailsConfig(BaseSettings):
 class SourcesConfig(BaseSettings):
     """Configuration for source finding."""
 
-    search_apis: list[str] = Field(
-        default_factory=lambda: ["semantic_scholar", "crossref", "web_search"]
-    )
+    search_apis: list[str] = Field(default_factory=lambda: ["semantic_scholar", "crossref", "web_search"])
     reliability_check: bool = True
 
 
@@ -40,9 +38,7 @@ class WikipediaConfig(BaseSettings):
 
     edit_summary_suffix: str = "(AI-assisted citation/cleanup, human-reviewed)"
     rate_limit_edits_per_hour: int = 10
-    user_agent: str = (
-        "WikiCiteBot/1.0 (https://github.com/yourorg/wiki-cite; citation-cleanup-assistant)"
-    )
+    user_agent: str = "WikiCiteBot/1.0 (https://github.com/yourorg/wiki-cite; citation-cleanup-assistant)"
 
 
 class ArticleSelectionConfig(BaseSettings):
@@ -57,7 +53,7 @@ class ArticleSelectionConfig(BaseSettings):
 class Config(BaseSettings):
     """Main configuration class."""
 
-    model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
+    model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
 
     agent: AgentConfig = Field(default_factory=AgentConfig)
     guardrails: GuardrailsConfig = Field(default_factory=GuardrailsConfig)
@@ -96,9 +92,7 @@ class Config(BaseSettings):
         if "wikipedia" in yaml_config:
             config_data["wikipedia"] = WikipediaConfig(**yaml_config["wikipedia"])
         if "article_selection" in yaml_config:
-            config_data["article_selection"] = ArticleSelectionConfig(
-                **yaml_config["article_selection"]
-            )
+            config_data["article_selection"] = ArticleSelectionConfig(**yaml_config["article_selection"])
 
         return cls(**config_data)
 

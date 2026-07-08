@@ -1,6 +1,5 @@
 """Tests for configuration management."""
 
-import pytest
 from pathlib import Path
 import tempfile
 
@@ -16,7 +15,7 @@ from wiki_cite.config import (
 def test_agent_config_defaults():
     """Test agent configuration defaults."""
     config = AgentConfig()
-    assert config.model == "claude-sonnet-4-20250514"
+    assert config.model == "claude-sonnet-5"
     assert config.max_edits_per_article == 15
 
 
@@ -77,7 +76,7 @@ def test_config_load_nonexistent_file():
     config = Config.load("nonexistent.yaml")
 
     # Should use defaults
-    assert config.agent.model == "claude-sonnet-4-20250514"
+    assert config.agent.model == "claude-sonnet-5"
     assert config.guardrails.max_new_words == 50
 
 

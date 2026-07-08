@@ -232,7 +232,9 @@ Propose your edits now:
 
                 # Validate the edit
                 is_valid, reason = self.guardrails.validate_edit(
-                    edit, article.wikitext, article.wikitext  # For now, just check individual edit
+                    edit,
+                    article.wikitext,
+                    article.wikitext,  # For now, just check individual edit
                 )
 
                 if is_valid:
@@ -275,15 +277,15 @@ Propose your edits now:
 
         # Sort edits by position in text (to apply from end to start)
         # This prevents position shifts from affecting later edits
-        sorted_edits = sorted(
-            edits, key=lambda e: modified_text.find(e.original_text), reverse=True
-        )
+        sorted_edits = sorted(edits, key=lambda e: modified_text.find(e.original_text), reverse=True)
 
         for edit in sorted_edits:
             # Find and replace the original text
             if edit.original_text in modified_text:
                 modified_text = modified_text.replace(
-                    edit.original_text, edit.proposed_text, 1  # Replace only first occurrence
+                    edit.original_text,
+                    edit.proposed_text,
+                    1,  # Replace only first occurrence
                 )
 
         return modified_text

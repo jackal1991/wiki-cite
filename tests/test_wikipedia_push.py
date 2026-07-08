@@ -2,7 +2,7 @@
 
 import pytest
 from datetime import datetime, timedelta
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
 
 from wiki_cite.wikipedia_push import WikipediaPushService, RateLimiter
 from wiki_cite.models import Article, EditProposal, ProposedEdit, EditType
@@ -82,6 +82,7 @@ def test_check_for_conflicts_with_conflict(push_service, mock_site):
 
 def test_check_for_conflicts_on_error(push_service, mock_site):
     """Test conflict detection returns True on error."""
+
     def raise_error(key):
         raise Exception("API Error")
 

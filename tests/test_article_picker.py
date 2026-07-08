@@ -1,10 +1,9 @@
 """Tests for article picker."""
 
 import pytest
-from unittest.mock import Mock, MagicMock
+from unittest.mock import Mock
 
 from wiki_cite.article_picker import ArticlePicker
-from wiki_cite.config import Config, ArticleSelectionConfig
 
 
 @pytest.fixture

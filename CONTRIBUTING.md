@@ -13,29 +13,27 @@ Thank you for your interest in contributing! This document provides guidelines f
 
 1. Fork the repository
 2. Clone your fork: `git clone https://github.com/yourusername/wiki-cite.git`
-3. Create a virtual environment: `python -m venv venv`
-4. Activate it: `source venv/bin/activate` (or `venv\Scripts\activate` on Windows)
-5. Install dependencies: `pip install -r requirements.txt`
-6. Install dev dependencies: `pip install -e ".[dev]"`
+3. Install [uv](https://docs.astral.sh/uv/) if you don't have it
+4. Install dependencies (creates `.venv` from `uv.lock`): `uv sync`
 
 ## Development Workflow
 
 1. Create a new branch: `git checkout -b feature/your-feature-name`
 2. Make your changes
 3. Add tests for new functionality
-4. Run tests: `pytest tests/`
-5. Run type checking: `mypy wiki_cite/`
-6. Commit your changes with clear messages
-7. Push to your fork
-8. Create a pull request
+4. Run tests: `uv run pytest`
+5. Lint and format: `uv run ruff check --fix . && uv run ruff format .`
+6. Run the security gate: `uv run bandit -r wiki_cite/ -lll --exclude wiki_cite/tests`
+7. Commit your changes with clear messages
+8. Push to your fork
+9. Create a pull request
 
 ## Coding Standards
 
 ### Python Style
 
-- Follow PEP 8
-- Use type hints for all functions
-- Maximum line length: 100 characters
+- Formatted and linted with `ruff` (config in `pyproject.toml`)
+- Modern type hints: `list[str]`, `X | None` — no `typing.List` / `Optional`
 - Use meaningful variable names
 
 ### Documentation
@@ -103,9 +101,9 @@ When modifying guardrails:
 
 ### Before Submitting
 
-- [ ] All tests pass
-- [ ] Type checking passes
-- [ ] Code follows style guidelines
+- [ ] All tests pass (`uv run pytest`)
+- [ ] `ruff check` and `ruff format --check` pass
+- [ ] `bandit -lll` security gate is clean
 - [ ] Documentation is updated
 - [ ] Commit messages are clear
 

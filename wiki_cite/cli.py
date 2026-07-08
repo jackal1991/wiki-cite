@@ -134,12 +134,8 @@ def main():
 
     # Web interface command
     web_parser = subparsers.add_parser("web", help="Start the web interface")
-    web_parser.add_argument(
-        "-p", "--port", type=int, default=5000, help="Port to run on (default: 5000)"
-    )
-    web_parser.add_argument(
-        "-H", "--host", default="0.0.0.0", help="Host to bind to (default: 0.0.0.0)"
-    )
+    web_parser.add_argument("-p", "--port", type=int, default=5000, help="Port to run on (default: 5000)")
+    web_parser.add_argument("-H", "--host", default="0.0.0.0", help="Host to bind to (default: 0.0.0.0)")
     web_parser.add_argument("-d", "--debug", action="store_true", help="Enable debug mode")
     web_parser.set_defaults(func=cmd_web)
 

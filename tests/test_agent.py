@@ -1,7 +1,7 @@
 """Tests for Claude agent."""
 
 import pytest
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import patch
 
 from wiki_cite.agent import ClaudeAgent
 from wiki_cite.models import Article, EditType, ProposedEdit
@@ -67,9 +67,7 @@ def test_apply_edits_single_edit(agent, sample_article):
     result = agent.apply_edits(sample_article, [edit])
 
     assert "is a great test" in result
-    assert "is a test" not in result or result.count("is a test") < sample_article.wikitext.count(
-        "is a test"
-    )
+    assert "is a test" not in result or result.count("is a test") < sample_article.wikitext.count("is a test")
 
 
 def test_apply_edits_multiple_edits(agent, sample_article):

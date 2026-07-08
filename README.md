@@ -50,15 +50,12 @@ git clone https://github.com/yourorg/wiki-cite.git
 cd wiki-cite
 ```
 
-2. Install dependencies:
+2. Install dependencies with [uv](https://docs.astral.sh/uv/):
 ```bash
-pip install -r requirements.txt
+uv sync
 ```
 
-Or install in development mode:
-```bash
-pip install -e .
-```
+This creates a `.venv` and installs runtime + dev dependencies from `uv.lock`. Run commands with `uv run` (e.g. `uv run wiki-cite web`).
 
 3. Create a `.env` file from the example:
 ```bash
@@ -236,13 +233,14 @@ article_selection:
 ### Running Tests
 
 ```bash
-pytest tests/
+uv run pytest
 ```
 
-### Type Checking
+### Lint, Format & Security
 
 ```bash
-mypy wiki_cite/
+uv run ruff check --fix . && uv run ruff format .
+uv run bandit -r wiki_cite/ -lll --exclude wiki_cite/tests
 ```
 
 ### Project Structure
@@ -266,8 +264,8 @@ wiki-cite/
 │       └── review.html
 ├── tests/                 # Test suite
 ├── config.yaml            # Configuration
-├── requirements.txt       # Dependencies
-├── setup.py              # Package setup
+├── pyproject.toml         # Project metadata, dependencies, tool config
+├── uv.lock                # Locked dependency versions
 └── README.md             # This file
 ```
 

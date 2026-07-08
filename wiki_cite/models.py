@@ -193,10 +193,7 @@ class EditProposal:
         Used to skip articles where no reliable source could be found, so the
         reviewer isn't shown pages with nothing worth approving.
         """
-        return any(
-            edit.edit_type == EditType.CITATION_ADDED and edit.confidence in ("high", "medium")
-            for edit in self.edits
-        )
+        return any(edit.edit_type == EditType.CITATION_ADDED and edit.confidence in ("high", "medium") for edit in self.edits)
 
     def get_edit_summary(self) -> str:
         """Generate a summary of approved edits for Wikipedia."""
@@ -211,9 +208,7 @@ class EditProposal:
 
         parts = []
         if counts.get("citation"):
-            parts.append(
-                f"added {counts['citation']} citation{'s' if counts['citation'] > 1 else ''}"
-            )
+            parts.append(f"added {counts['citation']} citation{'s' if counts['citation'] > 1 else ''}")
         if counts.get("wikilink"):
             parts.append(f"{counts['wikilink']} wikilink{'s' if counts['wikilink'] > 1 else ''}")
         if counts.get("grammar"):

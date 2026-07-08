@@ -135,9 +135,7 @@ class SourceFinder:
             except Exception:
                 return False
 
-    def search_google_scholar(
-        self, query: str, max_results: int = 5
-    ) -> list[Source]:  # pylint: disable=unused-argument
+    def search_google_scholar(self, query: str, max_results: int = 5) -> list[Source]:  # pylint: disable=unused-argument
         """Search Google Scholar for academic sources.
 
         Note: This is a simplified placeholder implementation.
@@ -312,8 +310,7 @@ class SourceFinder:
                         title=result.get("title", ""),
                         url=result_url,
                         publication_date=result.get("page_age") or result.get("age"),
-                        publisher=result.get("profile", {}).get("name")
-                        or urlparse(result_url).netloc,
+                        publisher=result.get("profile", {}).get("name") or urlparse(result_url).netloc,
                         source_type=SourceType.NEWS if "news" in query.lower() else SourceType.WEB,
                         reliability=self.check_reliability(result_url),
                     )
@@ -360,9 +357,7 @@ class SourceFinder:
 
             def meta(*names: str) -> str | None:
                 for name in names:
-                    tag = soup.find("meta", attrs={"property": name}) or soup.find(
-                        "meta", attrs={"name": name}
-                    )
+                    tag = soup.find("meta", attrs={"property": name}) or soup.find("meta", attrs={"name": name})
                     if tag and tag.get("content"):
                         return tag["content"].strip()
                 return None

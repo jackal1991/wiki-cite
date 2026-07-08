@@ -2,6 +2,7 @@
 Flask web application for reviewing and approving article edits.
 """
 
+import os
 from datetime import datetime
 
 from flask import Flask, jsonify, render_template, request
@@ -80,10 +81,7 @@ def create_app() -> Flask:
             return (
                 jsonify(
                     {
-                        "error": (
-                            f"Scanned {len(skipped)} candidate article(s) but couldn't "
-                            "confidently source a citation for any of them."
-                        ),
+                        "error": (f"Scanned {len(skipped)} candidate article(s) but couldn't confidently source a citation for any of them."),
                         "skipped": skipped,
                     }
                 ),
@@ -126,6 +124,7 @@ def create_app() -> Flask:
                     "title": proposal.article.title,
                     "url": proposal.article.url,
                     "wikitext": proposal.article.wikitext,
+                    "revision_id": proposal.article.revision_id,
                 },
                 "edits": [
                     {
@@ -275,7 +274,9 @@ def create_app() -> Flask:
 def main():
     """Run the Flask application."""
     app = create_app()
-    app.run(debug=True, host="0.0.0.0", port=5000)
+    debug = os.environ.get("FLASK_DEBUG", "").lower() in ("1", "true", "yes")
+    host = os.environ.get("FLASK_HOST", "127.0.0.1")
+    app.run(debug=debug, host=host, port=5000)
 
 
 if __name__ == "__main__":

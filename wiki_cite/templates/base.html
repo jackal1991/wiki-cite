@@ -3,252 +3,249 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{% block title %}Wikipedia Citation Assistant{% endblock %}</title>
+    <title>{% block title %}WikiCite — Citation & Cleanup Assistant{% endblock %}</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,500;8..60,600;8..60,700&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
 
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: #f3f1e9;
+            color: #22271f;
+            font-family: 'IBM Plex Sans', system-ui, -apple-system, sans-serif;
+            -webkit-font-smoothing: antialiased;
             line-height: 1.6;
-            color: #333;
-            background-color: #f5f5f5;
         }
 
-        .container {
-            max-width: 1200px;
-            margin: 0 auto;
-            padding: 20px;
+        a { color: #1c6b45; text-decoration: none; }
+        a:hover { color: #14432f; text-decoration: underline; }
+        ::selection { background: #cdedd6; }
+
+        .serif { font-family: 'Source Serif 4', Georgia, serif; }
+        .mono { font-family: 'IBM Plex Mono', 'Courier New', monospace; }
+
+        .container { max-width: 900px; margin: 0 auto; padding: 0 28px; }
+
+        /* ---------- Top bar ---------- */
+        .topbar { background: #14432f; color: #eaf3ec; border-bottom: 3px solid #1f8f57; }
+        .topbar-inner {
+            max-width: 900px; margin: 0 auto; padding: 18px 28px;
+            display: flex; align-items: center; gap: 14px;
+        }
+        .brand-mark {
+            width: 30px; height: 30px; background: #3fae5a; transform: rotate(45deg);
+            border-radius: 6px; box-shadow: inset 0 0 0 2px rgba(255,255,255,.35); flex-shrink: 0;
+        }
+        .brand-title { font-family: 'Source Serif 4', serif; font-weight: 700; font-size: 20px; letter-spacing: .2px; line-height: 1; }
+        .brand-sub { font-size: 12px; color: #a7c9b3; margin-top: 3px; letter-spacing: .02em; }
+        .review-pill {
+            display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: #bcd7c4;
+            background: rgba(255,255,255,.07); padding: 7px 13px; border-radius: 999px;
+            border: 1px solid rgba(255,255,255,.12);
+        }
+        .review-pill .dot { width: 7px; height: 7px; border-radius: 50%; background: #5fd08a; box-shadow: 0 0 0 3px rgba(95,208,138,.22); }
+
+        /* ---------- Layout ---------- */
+        main { max-width: 900px; margin: 0 auto; padding: 34px 28px 0; }
+        .page-wrap { min-height: 100vh; padding-bottom: 120px; }
+
+        /* ---------- Panels / cards ---------- */
+        .panel {
+            background: #fff; border: 1px solid #e4e2d6; border-radius: 12px;
+            padding: 26px 30px; box-shadow: 0 1px 2px rgba(30,40,25,.04);
+        }
+        .eyebrow { font-size: 12px; font-weight: 600; letter-spacing: .14em; text-transform: uppercase; color: #1f8f57; }
+        .page-title { font-family: 'Source Serif 4', serif; font-weight: 700; font-size: 30px; line-height: 1.15; margin-top: 8px; color: #1a2018; }
+        .page-title .accent { color: #1c6b45; }
+        .lead { margin-top: 12px; font-size: 15px; line-height: 1.65; color: #55604f; max-width: 60ch; }
+        .section-head { display: flex; align-items: baseline; justify-content: space-between; margin: 34px 4px 14px; }
+        .section-head h2 { font-family: 'Source Serif 4', serif; font-weight: 600; font-size: 17px; color: #2a3324; }
+        .muted { color: #8a917f; }
+        .count-num { color: #1c6b45; font-weight: 600; }
+
+        /* ---------- Buttons ---------- */
+        button { font-family: inherit; }
+        .btn-primary {
+            font-size: 14.5px; font-weight: 600; color: #fff; background: #1f8f57;
+            border: 1px solid #1f8f57; padding: 12px 22px; border-radius: 8px; cursor: pointer;
+            box-shadow: 0 1px 0 #14432f;
+        }
+        .btn-primary:hover { background: #187a49; }
+        .btn-primary:disabled, .btn-primary.is-disabled {
+            color: #9aa08d; background: #eceadf; border-color: #e0ddd0; box-shadow: none; cursor: not-allowed;
+        }
+        .btn-review {
+            font-size: 13.5px; font-weight: 600; color: #14432f; background: #e7f3ea;
+            border: 1px solid #cfe6d6; padding: 9px 18px; border-radius: 8px; cursor: pointer;
+        }
+        .btn-review:hover { background: #dcefe0; text-decoration: none; }
+        .btn-ghost {
+            font-size: 13px; font-weight: 500; color: #5c6653; background: #f1efe6;
+            border: 1px solid #e0ddd0; padding: 7px 14px; border-radius: 7px; cursor: pointer;
+        }
+        .btn-back { font-size: 13.5px; color: #5c6653; background: none; border: none; cursor: pointer; padding: 6px 0; }
+        .btn-back:hover { color: #14432f; }
+        .btn-reject-all {
+            font-size: 14px; font-weight: 600; color: #8a3b28; background: #fff;
+            border: 1px solid #e6d3cc; padding: 11px 18px; border-radius: 8px; cursor: pointer;
+        }
+        .btn-approve {
+            font-size: 12.5px; font-weight: 600; cursor: pointer; padding: 7px 14px; border-radius: 7px;
+            background: #eef4ea; color: #14432f; border: 1px solid #d5e6d9;
+        }
+        .btn-approve.is-approved { background: #1f8f57; color: #fff; border-color: #1f8f57; }
+        .btn-reject {
+            font-size: 12.5px; font-weight: 600; cursor: pointer; padding: 7px 14px; border-radius: 7px;
+            background: #f5f2ec; color: #7a6a63; border: 1px solid #e4ddd4;
+        }
+        .btn-reject.is-rejected { background: #c65a3f; color: #fff; border-color: #c65a3f; }
+        .btn-source {
+            font-size: 13px; font-weight: 500; color: #14432f; background: #eef4ea;
+            border: 1px solid #d5e6d9; padding: 7px 14px; border-radius: 7px; cursor: pointer;
         }
 
-        header {
-            background: #fff;
-            border-bottom: 2px solid #e0e0e0;
-            padding: 20px 0;
-            margin-bottom: 30px;
+        /* ---------- Badges ---------- */
+        .badge {
+            display: inline-block; padding: 4px 10px; border-radius: 5px; font-size: 11px;
+            font-weight: 600; letter-spacing: .04em; text-transform: uppercase;
+        }
+        .badge.type-citation   { background: #e3f1e6; color: #1c6b45; }
+        .badge.type-grammar    { background: #e4edf2; color: #2b5566; }
+        .badge.type-style      { background: #f3ecd9; color: #7a5c1e; }
+        .badge.type-wikilink   { background: #eae7f3; color: #4a3f7a; }
+        .badge.type-policy     { background: #f4e5e0; color: #8a3b28; }
+        .badge.type-formatting { background: #eae8e0; color: #55524a; }
+        .badge.conf-high   { background: #dff0e4; color: #1c6b45; }
+        .badge.conf-medium { background: #f3ecd9; color: #7a5c1e; }
+        .badge.conf-low    { background: #efece4; color: #6b6656; }
+
+        .status-pill {
+            display: inline-block; padding: 3px 10px; border-radius: 999px; font-size: 11px;
+            font-weight: 600; letter-spacing: .05em; text-transform: uppercase;
+            background: #f3ecd9; color: #7a5c1e;
+        }
+        .status-pill.pushed { background: #14432f; color: #cfe6d6; }
+
+        /* ---------- Queue items ---------- */
+        .queue-item {
+            background: #fff; border: 1px solid #e4e2d6; border-radius: 11px; padding: 20px 22px;
+            margin-bottom: 14px; display: flex; gap: 20px; align-items: center; box-shadow: 0 1px 2px rgba(30,40,25,.03);
+        }
+        .queue-item .title-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+        .queue-item .title-link { font-family: 'Source Serif 4', serif; font-weight: 600; font-size: 19px; color: #1a2018; }
+        .queue-meta { margin-top: 9px; display: flex; gap: 18px; font-size: 13px; color: #6b7263; flex-wrap: wrap; }
+        .queue-meta strong { color: #3a4433; font-weight: 600; }
+        .queue-meta .approved { color: #1c6b45; }
+        .queue-meta .approved strong { color: #1c6b45; }
+        .queue-meta .when { color: #9aa08d; }
+
+        /* ---------- Review: article header meta ---------- */
+        .article-meta { margin-top: 12px; display: flex; gap: 18px; flex-wrap: wrap; font-size: 13px; color: #6b7263; align-items: center; }
+        .article-meta .sep { color: #c8ccbc; }
+        .article-meta .rev { font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #8a917f; }
+
+        /* ---------- Trust strip ---------- */
+        .trust-strip {
+            margin-top: 14px; background: #e7f3ea; border: 1px solid #cfe6d6; border-radius: 11px;
+            padding: 15px 20px; display: flex; gap: 13px; align-items: flex-start;
+        }
+        .trust-strip .check {
+            width: 22px; height: 22px; border-radius: 6px; background: #1f8f57; flex-shrink: 0;
+            display: flex; align-items: center; justify-content: center; color: #fff; font-size: 13px; margin-top: 1px;
+        }
+        .trust-strip .body { font-size: 13.5px; line-height: 1.6; color: #274b37; }
+        .trust-strip code {
+            font-style: normal; font-family: 'IBM Plex Mono', monospace; font-size: 12px;
+            background: #d7ebdc; padding: 1px 5px; border-radius: 4px;
         }
 
-        h1 {
-            font-size: 24px;
-            color: #202122;
-        }
-
-        .btn {
-            display: inline-block;
-            padding: 10px 20px;
-            background: #36c;
-            color: white;
-            text-decoration: none;
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
-            font-size: 14px;
-            transition: background 0.2s;
-        }
-
-        .btn:hover {
-            background: #2856a3;
-        }
-
-        .btn-secondary {
-            background: #72777d;
-        }
-
-        .btn-secondary:hover {
-            background: #54595d;
-        }
-
-        .btn-danger {
-            background: #d33;
-        }
-
-        .btn-danger:hover {
-            background: #b32424;
-        }
-
-        .btn-success {
-            background: #14866d;
-        }
-
-        .btn-success:hover {
-            background: #0e6c59;
-        }
-
-        .card {
-            background: white;
-            border-radius: 4px;
-            padding: 20px;
-            margin-bottom: 20px;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
-        }
-
+        /* ---------- Edit items ---------- */
         .edit-item {
-            border: 1px solid #e0e0e0;
-            border-radius: 4px;
-            padding: 15px;
-            margin-bottom: 15px;
+            background: #fff; border: 1px solid #e7e4d8; border-radius: 11px; padding: 19px 22px;
+            margin-bottom: 14px; box-shadow: 0 1px 2px rgba(30,40,25,.03); transition: background .15s, border-color .15s;
         }
+        .edit-item.is-approved { background: #fbfdfb; border-color: #bfe0ca; }
+        .edit-item.is-rejected { background: #faf7f5; border-color: #e9ddd7; }
+        .edit-top { display: flex; align-items: center; justify-content: space-between; gap: 14px; flex-wrap: wrap; }
+        .edit-badges { display: flex; align-items: center; gap: 9px; }
+        .edit-actions { display: flex; gap: 8px; }
 
-        .edit-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 10px;
+        .diff-box {
+            margin-top: 14px; background: #faf9f3; border: 1px solid #ece9dc; border-radius: 8px;
+            padding: 13px 15px; font-family: 'IBM Plex Mono', monospace; font-size: 13px; line-height: 1.7;
         }
+        .diff-line { display: flex; gap: 8px; }
+        .diff-line + .diff-line { margin-top: 3px; }
+        .diff-minus .sign { color: #b0492f; user-select: none; }
+        .diff-minus .text { color: #a34d38; text-decoration: line-through; text-decoration-color: #d8a99b; }
+        .diff-plus .sign { color: #1f8f57; user-select: none; }
+        .diff-plus .text { color: #14432f; background: #dff0e4; border-radius: 3px; padding: 0 2px; }
 
-        .edit-type {
-            display: inline-block;
-            padding: 4px 8px;
-            background: #eaecf0;
-            border-radius: 3px;
-            font-size: 12px;
-            font-weight: bold;
-            text-transform: uppercase;
-        }
+        .why { margin-top: 13px; font-size: 14px; line-height: 1.6; color: #4a5442; }
+        .why strong { font-weight: 600; color: #2a3324; }
+        .policy-line { margin-top: 8px; font-size: 13px; color: #6b7263; }
+        .policy-line a { font-family: 'IBM Plex Mono', monospace; font-size: 12.5px; }
 
-        .edit-type.citation { background: #d4edda; color: #155724; }
-        .edit-type.grammar { background: #d1ecf1; color: #0c5460; }
-        .edit-type.style { background: #fff3cd; color: #856404; }
-        .edit-type.wikilink { background: #d3d3f9; color: #383874; }
-        .edit-type.policy { background: #f8d7da; color: #721c24; }
-        .edit-type.formatting { background: #e2e3e5; color: #383d41; }
-
-        .diff-view {
-            background: #f8f9fa;
-            border-radius: 4px;
-            padding: 10px;
-            margin: 10px 0;
-            font-family: 'Courier New', monospace;
-            font-size: 13px;
-        }
-
-        .diff-removed {
-            color: #d33;
-            text-decoration: line-through;
-        }
-
-        .diff-added {
-            color: #14866d;
-            font-weight: bold;
-        }
-
-        .confidence {
-            display: inline-block;
-            padding: 2px 6px;
-            border-radius: 3px;
-            font-size: 11px;
-            font-weight: bold;
-        }
-
-        .confidence.high { background: #d4edda; color: #155724; }
-        .confidence.medium { background: #fff3cd; color: #856404; }
-        .confidence.low { background: #f8d7da; color: #721c24; }
-
-        .actions {
-            display: flex;
-            gap: 10px;
-            margin-top: 10px;
-        }
-
-        .status-pending { color: #856404; }
-        .status-approved { color: #155724; }
-        .status-rejected { color: #721c24; }
-        .status-pushed { color: #0c5460; }
-
-        pre {
-            background: #f8f9fa;
-            padding: 10px;
-            border-radius: 4px;
-            overflow-x: auto;
-            white-space: pre-wrap;
-            word-wrap: break-word;
-        }
-
-        .loading {
-            text-align: center;
-            padding: 40px;
-            color: #72777d;
-        }
-
-        .error {
-            background: #f8d7da;
-            color: #721c24;
-            padding: 15px;
-            border-radius: 4px;
-            margin-bottom: 20px;
-        }
-
-        .success {
-            background: #d4edda;
-            color: #155724;
-            padding: 15px;
-            border-radius: 4px;
-            margin-bottom: 20px;
-        }
-
-        .source-preview {
-            margin-top: 10px;
-        }
-
+        /* ---------- Source preview ---------- */
+        .source-wrap { margin-top: 14px; }
         .source-card {
-            display: flex;
-            gap: 12px;
-            margin-top: 10px;
-            border: 1px solid #e0e0e0;
-            border-radius: 4px;
-            padding: 12px;
-            background: #fafafa;
+            margin-top: 11px; display: flex; gap: 14px; border: 1px solid #d5e6d9; border-left: 3px solid #1f8f57;
+            border-radius: 8px; padding: 14px 16px; background: #fbfdfb;
+        }
+        .source-card-image { width: 74px; height: 74px; border-radius: 6px; flex-shrink: 0; object-fit: cover; }
+        .source-card-ph {
+            width: 74px; height: 74px; border-radius: 6px; flex-shrink: 0; display: flex; align-items: center;
+            justify-content: center; font-family: 'IBM Plex Mono', monospace; font-size: 9px; color: #7ba889;
+            text-align: center; line-height: 1.3;
+            background: repeating-linear-gradient(135deg,#e7f0e9,#e7f0e9 6px,#dceadf 6px,#dceadf 12px);
+        }
+        .source-card-body { min-width: 0; }
+        .source-card-site { font-size: 11px; letter-spacing: .05em; text-transform: uppercase; color: #8a917f; }
+        .source-card-title { display: block; font-weight: 600; font-size: 15px; margin: 3px 0 5px; color: #1c6b45; }
+        .source-card-desc { font-size: 13px; line-height: 1.55; color: #5c6653; }
+
+        /* ---------- Combined diff ---------- */
+        .combined-diff { background: #fff; border: 1px solid #e4e2d6; border-radius: 12px; padding: 22px 26px; margin-top: 22px; box-shadow: 0 1px 2px rgba(30,40,25,.03); }
+        .combined-diff .head { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
+        .combined-diff h3 { font-family: 'Source Serif 4', serif; font-weight: 600; font-size: 16px; color: #2a3324; }
+        .combined-diff pre {
+            margin-top: 15px; background: #0f3524; color: #cfe6d6; border-radius: 9px; padding: 17px 18px;
+            overflow-x: auto; font-family: 'IBM Plex Mono', monospace; font-size: 12.5px; line-height: 1.7;
+            white-space: pre-wrap; word-wrap: break-word;
         }
 
-        .source-card-image {
-            width: 80px;
-            height: 80px;
-            object-fit: cover;
-            border-radius: 4px;
-            flex-shrink: 0;
+        /* ---------- Sticky action bar ---------- */
+        .sticky-bar {
+            position: fixed; left: 0; right: 0; bottom: 0; background: rgba(243,241,233,.92);
+            backdrop-filter: blur(8px); border-top: 1px solid #dedbce; z-index: 10;
         }
+        .sticky-inner { max-width: 900px; margin: 0 auto; padding: 14px 28px; display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+        .sticky-inner .summary { flex: 1; font-size: 13.5px; color: #5c6653; }
+        .sticky-inner .summary strong { color: #1c6b45; font-weight: 600; }
+        .sticky-inner .summary .article-name { color: #2a3324; }
 
-        .source-card-body {
-            min-width: 0;
-        }
-
-        .source-card-site {
-            font-size: 12px;
-            color: #72777d;
-            text-transform: uppercase;
-            letter-spacing: 0.03em;
-        }
-
-        .source-card-title {
-            display: block;
-            font-weight: bold;
-            color: #36c;
-            text-decoration: none;
-            margin: 2px 0 6px;
-        }
-
-        .source-card-title:hover {
-            text-decoration: underline;
-        }
-
-        .source-card-desc {
-            font-size: 13px;
-            color: #54595d;
-        }
+        /* ---------- Feedback banners ---------- */
+        .banner { border-radius: 11px; padding: 14px 18px; margin-bottom: 16px; font-size: 14px; }
+        .banner.error { background: #f6e6e0; color: #8a3b28; border: 1px solid #e6d3cc; }
+        .banner.success { background: #e7f3ea; color: #274b37; border: 1px solid #cfe6d6; }
+        .loading { text-align: center; padding: 40px; color: #7a8271; font-size: 14px; }
     </style>
     {% block extra_styles %}{% endblock %}
 </head>
 <body>
-    <header>
-        <div class="container">
-            <h1>Wikipedia Citation & Cleanup Assistant</h1>
-        </div>
-    </header>
+    <div class="page-wrap">
+        <header class="topbar">
+            <div class="topbar-inner">
+                <div class="brand-mark"></div>
+                <div style="flex:1;">
+                    <div class="brand-title">WikiCite</div>
+                    <div class="brand-sub">Citation &amp; Cleanup Assistant</div>
+                </div>
+                <div class="review-pill"><span class="dot"></span> Human review required</div>
+            </div>
+        </header>
 
-    <div class="container">
         {% block content %}{% endblock %}
     </div>
 

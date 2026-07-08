@@ -1,5 +1,5 @@
 agent:
-  model: "claude-sonnet-4-20250514"
+  model: "claude-sonnet-5"
   max_edits_per_article: 15
   max_candidates_per_fetch: 20   # how many stub articles to scan per "Fetch New Article" before giving up
 
