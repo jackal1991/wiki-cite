@@ -4,7 +4,6 @@ Simple usage example for the Wikipedia Citation & Cleanup Tool.
 This script demonstrates basic usage of the tool's components.
 """
 
-import os
 from pathlib import Path
 
 # Add parent directory to path for imports
@@ -14,7 +13,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from wiki_cite.agent import ClaudeAgent
 from wiki_cite.article_picker import ArticlePicker
-from wiki_cite.config import get_config, set_config, Config
+from wiki_cite.config import get_config
 from wiki_cite.models import Article
 
 
