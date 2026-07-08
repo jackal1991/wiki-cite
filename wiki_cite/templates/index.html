@@ -208,7 +208,13 @@
                 pushLog('found', '✓', `${truncate(evt.source_title, 64)} · ${evt.count} source${evt.count === 1 ? '' : 's'}`);
                 break;
             case 'source_none':
-                pushLog('', '·', 'No reliable source found for that claim');
+                pushLog('', '·', evt.error ? `Search failed: ${truncate(evt.error, 70)}` : 'No reliable source found for that claim');
+                break;
+            case 'fetching':
+                pushLog('search', '↧', evt.title ? `Fetched “${truncate(evt.title, 50)}” — ${truncate(evt.url || '', 40)}` : `Fetching ${truncate(evt.url || '', 60)}…`);
+                break;
+            case 'thinking':
+                pushLog('think', '…', truncate(evt.text, 90));
                 break;
             case 'model_call':
                 scan.model = evt.model;

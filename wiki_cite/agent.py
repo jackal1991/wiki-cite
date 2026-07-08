@@ -1,5 +1,11 @@
 """
 Claude Agent for proposing minimal edits to Wikipedia articles.
+
+The agent drives a bounded, per-article agentic tool-use loop against Claude:
+it reads the flagged {{Citation needed}} claims in context, issues its own
+search/fetch tool calls against SourceFinder, and terminates by calling the
+`propose_edits` tool with a final list of edits. See
+docs/design-plans/2026-07-08-4-agentic-source-search.md for the full design.
 """
 
 import json
@@ -12,12 +18,14 @@ from anthropic import Anthropic
 from wiki_cite.article_picker import build_focused_excerpt
 from wiki_cite.config import get_config
 from wiki_cite.guardrails import EditGuardrails
-from wiki_cite.models import Article, EditProposal, EditType, ProposedEdit
+from wiki_cite.models import Article, EditProposal, EditType, ProposedEdit, Source
 from wiki_cite.source_finder import SourceFinder
 
 
-AGENT_SYSTEM_PROMPT = """You are a Wikipedia copyeditor and citation assistant. Your task is to make
-MINIMAL improvements to stub articles. You must follow these strict rules:
+SEARCH_SYSTEM_PROMPT = """You are a Wikipedia copyeditor and citation assistant. Your task is to make
+MINIMAL improvements to stub articles by finding real sources for claims already in the text.
+You have tools to search for sources and fetch page previews to verify candidates. You must
+follow these strict rules:
 
 ## ABSOLUTE CONSTRAINTS
 1. DO NOT add new facts, claims, or information
@@ -29,25 +37,23 @@ MINIMAL improvements to stub articles. You must follow these strict rules:
 ## PERMITTED EDITS
 
 ### Citation Addition
-- Find reliable sources that verify EXISTING claims in the article
+- Use the search tools to find reliable sources that verify EXISTING claims in the article
+- Prefer `search_scholar` or `search_crossref` for claims that plausibly cite academic or
+  scholarly work; use `search_web` for everyday factual claims (biography, events, places)
+- Use `fetch_page` to check that a candidate source actually appears to support the claim
+  before citing it
 - Add <ref> tags with proper {{cite}} templates
-- Only cite claims already present—never add information from sources
+- Only cite claims already present in the article — never add information from sources
 
 ### Grammar & Spelling
-- Fix grammatical errors
-- Correct spelling mistakes
-- Fix punctuation
+- Fix grammatical errors, spelling mistakes, and punctuation
 
 ### Style (per WP:MOS)
-- Fix capitalization issues
-- Correct date formats
-- Fix number formatting
-- Ensure proper use of italics/bold
+- Fix capitalization issues, date formats, number formatting, italics/bold usage
 
 ### Wikilinks
-- Add [[wikilinks]] to existing mentions of notable topics
-- Do not over-link (link first occurrence only)
-- Do not link common words
+- Add [[wikilinks]] to existing mentions of notable topics (first occurrence only)
+- Do not over-link or link common words
 
 ### Policy Compliance
 - Flag or remove unsourced contentious claims (WP:BLP)
@@ -55,50 +61,147 @@ MINIMAL improvements to stub articles. You must follow these strict rules:
 - Fix any copyright concerns
 
 ### Formatting
-- Add/fix categories
-- Correct stub template
-- Fix malformed wikitext
+- Add/fix categories, correct stub template, fix malformed wikitext
 
-## OUTPUT FORMAT
-You must respond with a JSON array of edits. Each edit must have:
-- edit_type: one of "citation", "grammar", "style", "wikilink", "policy", "formatting"
-- original_text: the exact text being changed
-- proposed_text: the replacement text
-- rationale: explanation for the change
-- policy_reference: relevant Wikipedia policy (if applicable)
-- confidence: "high", "medium", or "low"
+## SEARCH BUDGET
+You have a limited number of search/fetch tool calls for this article. Use them efficiently:
+write a specific query, evaluate the results, and pivot or refine only if the first attempt
+was unproductive. If a claim can't be verified within budget, leave it uncited rather than
+spending remaining turns on a single hard claim.
 
-Example response:
-```json
-[
-  {
-    "edit_type": "citation",
-    "original_text": "were accused of raping a white woman in 1949",
-    "proposed_text": "were accused of raping a white woman in 1949<ref>{{cite book |last=Green |first=Ben |title=Before His Time |year=1999 |publisher=Free Press}}</ref>",
-    "rationale": "Adding citation for existing claim about the accusation",
-    "policy_reference": "WP:CITE",
-    "confidence": "high"
-  },
-  {
-    "edit_type": "grammar",
-    "original_text": "The four men was arrested",
-    "proposed_text": "The four men were arrested",
-    "rationale": "Subject-verb agreement error",
-    "policy_reference": null,
-    "confidence": "high"
-  }
-]
-```
-
-If you cannot verify a claim with reliable sources, note this in your response but DO NOT
-remove the claim unless it violates BLP policy.
-
-Respond ONLY with the JSON array, no other text.
+## ENDING THE SEARCH
+When you have found citations that genuinely support the flagged claims (or have determined
+that no further searching would help), call the `propose_edits` tool with your final list of
+edits. This is the ONLY way to end the task — do not respond with plain text. If you cannot
+verify a claim with a reliable source, do not remove it (unless it violates BLP policy); simply
+omit a citation edit for it.
 """
 
 
+# --- Tool schemas ------------------------------------------------------------
+
+_QUERY_INPUT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {"query": {"type": "string", "description": "The search query text."}},
+    "required": ["query"],
+    "additionalProperties": False,
+}
+
+SEARCH_SCHOLAR_TOOL: dict[str, Any] = {
+    "name": "search_scholar",
+    "description": (
+        "Search Semantic Scholar for academic papers. Call this when the flagged claim "
+        "plausibly cites peer-reviewed research, a scientific finding, or scholarly analysis."
+    ),
+    "input_schema": _QUERY_INPUT_SCHEMA,
+    "strict": True,
+}
+
+SEARCH_CROSSREF_TOOL: dict[str, Any] = {
+    "name": "search_crossref",
+    "description": (
+        "Search CrossRef for published works (journal articles, books, conference papers) that "
+        "have a DOI. Call this for claims that likely trace to a formally published work."
+    ),
+    "input_schema": _QUERY_INPUT_SCHEMA,
+    "strict": True,
+}
+
+SEARCH_WEB_TOOL: dict[str, Any] = {
+    "name": "search_web",
+    "description": (
+        "Search the general web and news for sources. Call this for everyday factual claims "
+        "(biographical facts, events, places, organizations) that would not appear in an "
+        "academic database."
+    ),
+    "input_schema": _QUERY_INPUT_SCHEMA,
+    "strict": True,
+}
+
+FETCH_PAGE_TOOL: dict[str, Any] = {
+    "name": "fetch_page",
+    "description": (
+        "Fetch a lightweight preview (title, description, site) of a candidate source page. "
+        "Call this before citing a search result to verify it actually appears to support the "
+        "claim it would be attached to."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {"url": {"type": "string", "description": "The candidate source URL to preview."}},
+        "required": ["url"],
+        "additionalProperties": False,
+    },
+    "strict": True,
+}
+
+_EDIT_INPUT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "edit_type": {
+            "type": "string",
+            "enum": [t.value for t in EditType],
+            "description": "The kind of edit being proposed.",
+        },
+        "original_text": {
+            "type": "string",
+            "description": "The exact existing wikitext being changed (must be a verbatim substring of the article excerpt).",
+        },
+        "proposed_text": {"type": "string", "description": "The replacement wikitext."},
+        "rationale": {"type": "string", "description": "Why this edit is being made."},
+        "policy_reference": {
+            "type": ["string", "null"],
+            "description": "Relevant Wikipedia policy (e.g. WP:CITE), or null if not applicable.",
+        },
+        "confidence": {"type": "string", "enum": ["high", "medium", "low"]},
+    },
+    "required": ["edit_type", "original_text", "proposed_text", "rationale", "policy_reference", "confidence"],
+    "additionalProperties": False,
+}
+
+PROPOSE_EDITS_TOOL: dict[str, Any] = {
+    "name": "propose_edits",
+    "description": (
+        "Submit the final list of proposed edits and end the task. Call this once you have "
+        "either found citations that genuinely support the flagged claims, or determined that "
+        "no further searching would help. This is the terminal step — nothing else follows it."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {"edits": {"type": "array", "items": _EDIT_INPUT_SCHEMA}},
+        "required": ["edits"],
+        "additionalProperties": False,
+    },
+    "strict": True,
+}
+
+SEARCH_TOOLS: list[dict[str, Any]] = [SEARCH_SCHOLAR_TOOL, SEARCH_CROSSREF_TOOL, SEARCH_WEB_TOOL, FETCH_PAGE_TOOL]
+ALL_TOOLS: list[dict[str, Any]] = [*SEARCH_TOOLS, PROPOSE_EDITS_TOOL]
+
+# Maps a search tool name to the config.sources.search_apis / activity-log API label.
+_SEARCH_TOOL_API_NAMES: dict[str, str] = {
+    "search_scholar": "semantic_scholar",
+    "search_crossref": "crossref",
+    "search_web": "web_search",
+}
+
+
+def _sources_to_dicts(sources: list[Source]) -> list[dict[str, Any]]:
+    """Convert Source objects into a compact JSON-serializable shape for tool results."""
+    return [
+        {
+            "title": s.title,
+            "authors": s.authors,
+            "year": s.publication_date,
+            "doi": s.doi,
+            "url": s.url,
+            "citation_template": s.to_citation_template(),
+        }
+        for s in sources
+    ]
+
+
 class ClaudeAgent:
-    """Claude-powered agent for proposing article edits."""
+    """Claude-powered agent that searches for sources and proposes article edits."""
 
     def __init__(self):
         """Initialize the agent."""
@@ -107,8 +210,76 @@ class ClaudeAgent:
         self.source_finder = SourceFinder()
         self.guardrails = EditGuardrails()
 
+    # --- Tool dispatch ---------------------------------------------------
+
+    def _dispatch_search_tool(self, name: str, tool_input: dict[str, Any]) -> tuple[bool, str]:
+        """Execute one search/fetch tool call. Never raises.
+
+        Args:
+            name: The tool name (search_scholar, search_crossref, search_web, fetch_page).
+            tool_input: The tool's parsed input dict.
+
+        Returns:
+            (ok, payload) — payload is a JSON string of results (or a page-preview
+            dict) on success, or a human-readable error string when ok is False.
+        """
+        try:
+            per_query = self.config.agent.search_results_per_query
+            if name == "search_scholar":
+                sources = self.source_finder.search_semantic_scholar(tool_input["query"], max_results=per_query)
+                return True, json.dumps(_sources_to_dicts(sources))
+            if name == "search_crossref":
+                sources = self.source_finder.search_crossref(tool_input["query"], max_results=per_query)
+                return True, json.dumps(_sources_to_dicts(sources))
+            if name == "search_web":
+                sources = self.source_finder.search_web(tool_input["query"], max_results=per_query)
+                return True, json.dumps(_sources_to_dicts(sources))
+            if name == "fetch_page":
+                preview = self.source_finder.fetch_page_preview(tool_input["url"])
+                return True, json.dumps(preview)
+            return False, f"Unknown tool: {name}"
+        except Exception as e:  # a failed tool call must never abort the loop
+            return False, f"Tool execution error: {e}"
+
+    def _tool_call_event(self, name: str, tool_input: dict[str, Any]) -> dict[str, Any]:
+        """Build the pre-execution progress event for a search/fetch tool call."""
+        if name == "fetch_page":
+            return {"type": "fetching", "url": tool_input.get("url", "")}
+        return {
+            "type": "searching",
+            "api": _SEARCH_TOOL_API_NAMES.get(name, name),
+            "query": tool_input.get("query", ""),
+        }
+
+    def _tool_result_event(self, name: str, ok: bool, payload: str) -> dict[str, Any]:
+        """Build the post-execution progress event for a search/fetch tool call."""
+        if not ok:
+            return {"type": "source_none", "error": payload}
+
+        try:
+            data = json.loads(payload)
+        except json.JSONDecodeError:
+            data = None
+
+        if name == "fetch_page":
+            preview = data if isinstance(data, dict) else {}
+            return {"type": "fetching", "url": preview.get("url", ""), "title": preview.get("title")}
+
+        results = data if isinstance(data, list) else []
+        if results:
+            top = results[0]
+            return {
+                "type": "source_found",
+                "count": len(results),
+                "source_title": top.get("title", ""),
+                "citation": top.get("citation_template", ""),
+            }
+        return {"type": "source_none"}
+
+    # --- Prompt & response parsing ----------------------------------------
+
     def _extract_json_from_response(self, text: str) -> list[dict[str, Any]]:
-        """Extract JSON array from Claude's response.
+        """Extract a JSON array of edits from free-form response text (fallback path).
 
         Args:
             text: The response text
@@ -116,18 +287,12 @@ class ClaudeAgent:
         Returns:
             List of edit dictionaries
         """
-        # Try to find JSON array in the response
-        # Look for content between ```json and ``` or just raw JSON
         json_match = re.search(r"```json\s*(.*?)\s*```", text, re.DOTALL)
         if json_match:
             json_text = json_match.group(1)
         else:
-            # Try to find raw JSON array
             json_match = re.search(r"\[\s*\{.*?\}\s*\]", text, re.DOTALL)
-            if json_match:
-                json_text = json_match.group(0)
-            else:
-                json_text = text
+            json_text = json_match.group(0) if json_match else text
 
         try:
             return json.loads(json_text)
@@ -136,51 +301,23 @@ class ClaudeAgent:
             print(f"Response text: {text[:500]}")
             return []
 
-    def _search_claim(self, claim: str, index: int) -> tuple[list, str]:
-        """Search for sources for one claim; return (sources, prompt fragment)."""
-        sources = self.source_finder.find_sources_for_claim(claim, max_results=2)
-        if not sources:
-            return sources, ""
-        fragment = f'### Claim {index}: "{claim[:100]}..."\n'
-        for j, source in enumerate(sources, 1):
-            fragment += f"{j}. {source.to_citation_template()}\n"
-        return sources, fragment + "\n"
-
-    def _build_sources_context(self, article: Article) -> str:
-        """Build context about available sources for the article.
-
-        Args:
-            article: The article to find sources for
-
-        Returns:
-            String describing available sources
-        """
-        # Prefer the specific {{Citation needed}} claims when present; these are
-        # the exact statements Wikipedia has flagged as needing a source.
-        claims = article.citation_needed_claims or self.source_finder.extract_claims(article.wikitext)
-
-        if not claims:
-            return "No clear factual claims found to cite."
-
-        # Find sources for key claims (limit to first 3 to avoid overwhelming)
-        sources_context = "## Available Sources for Citation\n\n"
-        for i, claim in enumerate(claims[:3], 1):
-            _, fragment = self._search_claim(claim, i)
-            sources_context += fragment
-        return sources_context
-
-    def _build_prompt(self, article: Article, sources_context: str) -> str:
-        """Assemble the user prompt from the focused excerpt, flagged claims, and sources."""
+    def _build_agentic_prompt(self, article: Article) -> str:
+        """Assemble the user prompt from the focused excerpt, flagged claims, and instructions."""
         flagged_section = ""
         if article.citation_needed_claims:
             flagged = "\n".join(f'- "{claim}"' for claim in article.citation_needed_claims)
-            flagged_section = f"## Claims tagged {{{{Citation needed}}}}\nThese statements are already in the article and have been flagged as needing a source. Prioritize adding a citation to each one; do not add new information.\n{flagged}\n"
+            flagged_section = (
+                "## Claims tagged {{Citation needed}}\n"
+                "These statements are already in the article and have been flagged as needing a "
+                "source. Search for a source for each one; do not add new information.\n"
+                f"{flagged}\n"
+            )
 
         # Send only the lead paragraph plus the paragraphs containing flagged
         # claims, rather than the whole article — keeps the prompt small and focused.
         excerpt = build_focused_excerpt(article.wikitext)
 
-        return f"""Please analyze this Wikipedia article and propose minimal edits:
+        return f"""Please find citations for this Wikipedia article's flagged claims, then propose minimal edits.
 
 ## Article Title
 {article.title}
@@ -191,25 +328,34 @@ This is an excerpt: the lead paragraph and the paragraphs containing flagged cla
 {excerpt}
 
 {flagged_section}
-{sources_context}
+Use the search tools to find sources for the flagged claims above. When you have what you need
+(or have determined further searching won't help), call `propose_edits` with your final edits.
 
 Remember:
 1. Only cite EXISTING claims, never add new information
 2. Keep edits minimal - grammar, style, wikilinks, citations only
 3. Do not change the article's scope or add new content
-4. Respond with JSON only
-
-Propose your edits now:
+4. You must end by calling `propose_edits` - do not respond with plain text
 """
 
-    def _parse_edits(self, article: Article, response_text: str) -> list[ProposedEdit]:
-        """Parse and guardrail-validate the edits from Claude's response."""
-        edits_data = self._extract_json_from_response(response_text)
+    @staticmethod
+    def _edit_type_from_value(value: str) -> EditType | None:
+        """Map an edit_type string (tool value, e.g. 'citation') to an EditType."""
+        try:
+            return EditType(value)
+        except ValueError:
+            pass
+        try:
+            return EditType[value.upper().replace(" ", "_")]
+        except (KeyError, AttributeError):
+            return None
+
+    def _build_edits_from_data(self, article: Article, edits_data: list[dict[str, Any]]) -> list[ProposedEdit]:
+        """Validate and guardrail-filter a list of edit dicts into ProposedEdit objects."""
         proposed_edits: list[ProposedEdit] = []
         for edit_data in edits_data[: self.config.agent.max_edits_per_article]:
-            try:
-                edit_type = EditType[edit_data["edit_type"].upper().replace(" ", "_")]
-            except (KeyError, ValueError):
+            edit_type = self._edit_type_from_value(edit_data.get("edit_type", ""))
+            if edit_type is None:
                 continue
 
             edit = ProposedEdit(
@@ -229,52 +375,121 @@ Propose your edits now:
                 print(f"Rejected edit: {reason}")
         return proposed_edits
 
-    def analyze_article_events(self, article: Article):
-        """Analyze an article, yielding progress events for the UI.
+    # --- The agentic loop --------------------------------------------------
 
-        Yields intermediate events — per-claim source searches, the model call,
-        and edits proposed — and finally ``{"type": "analyzed", "proposal": ...}``.
-        ``analyze_article`` wraps this and returns just the proposal, so callers
-        that don't care about progress are unaffected.
+    def analyze_article_events(self, article: Article):
+        """Analyze an article via a bounded agentic search loop, yielding progress events.
+
+        Drives its own call-and-response loop against Claude: reads the flagged
+        {{Citation needed}} claims in context, issues search/fetch tool calls
+        against SourceFinder, and terminates by calling the `propose_edits` tool
+        with a final list of edits. Bounded by ``agent.max_search_turns``
+        tool-executing model calls — once the budget is exhausted, the loop
+        forces one final decision call with only the terminal tool available.
+
+        Yields intermediate progress events — searches, fetches, thinking
+        summaries, and edits proposed — and finally
+        ``{"type": "analyzed", "proposal": ...}``. ``analyze_article`` wraps
+        this and returns just the proposal, so callers that don't care about
+        progress are unaffected.
         """
         claims = article.citation_needed_claims or self.source_finder.extract_claims(article.wikitext)
-        apis = list(self.config.sources.search_apis)
-
         if not claims:
-            sources_context = "No clear factual claims found to cite."
-        else:
-            sources_context = "## Available Sources for Citation\n\n"
-            for i, claim in enumerate(claims[:3], 1):
-                yield {"type": "searching", "claim": claim, "apis": apis}
-                sources, fragment = self._search_claim(claim, i)
-                sources_context += fragment
-                if sources:
-                    top = sources[0]
-                    yield {"type": "source_found", "claim": claim, "count": len(sources), "source_title": top.title, "citation": top.to_citation_template()}
-                else:
-                    yield {"type": "source_none", "claim": claim}
+            proposal = EditProposal(
+                id=str(uuid.uuid4()),
+                article=article,
+                edits=[],
+                status="rejected",
+                reviewer_notes="No clear factual claims found to cite.",
+            )
+            yield {"type": "model_done", "edit_count": 0}
+            yield {"type": "analyzed", "proposal": proposal}
+            return
 
-        user_prompt = self._build_prompt(article, sources_context)
+        messages: list[dict[str, Any]] = [{"role": "user", "content": self._build_agentic_prompt(article)}]
+        max_turns = self.config.agent.max_search_turns
+        turns = 0
+        proposed_edits_data: list[dict[str, Any]] | None = None
+        fallback_text = ""
 
         yield {"type": "model_call", "model": self.config.agent.model}
+
         try:
-            response = self.client.messages.create(
-                model=self.config.agent.model,
-                max_tokens=4096,
-                system=AGENT_SYSTEM_PROMPT,
-                messages=[{"role": "user", "content": user_prompt}],
-            )
-            proposed_edits = self._parse_edits(article, response.content[0].text)
-            proposal = EditProposal(id=str(uuid.uuid4()), article=article, edits=proposed_edits, status="pending")
-            yield {"type": "model_done", "edit_count": len(proposed_edits)}
-            yield {"type": "analyzed", "proposal": proposal}
+            while True:
+                at_cap = turns >= max_turns
+                tools = [PROPOSE_EDITS_TOOL] if at_cap else ALL_TOOLS
+                tool_choice = {"type": "tool", "name": "propose_edits"} if at_cap else {"type": "auto"}
+
+                response = self.client.messages.create(
+                    model=self.config.agent.model,
+                    max_tokens=8000,
+                    system=SEARCH_SYSTEM_PROMPT,
+                    thinking={"type": "adaptive", "display": "summarized"},
+                    output_config={"effort": "high"},
+                    tools=tools,
+                    tool_choice=tool_choice,
+                    messages=messages,
+                )
+
+                # --- stop_reason handling (guard BEFORE reading content) ---
+                if response.stop_reason == "refusal":
+                    break  # decline -> skip; content may be empty
+                if response.stop_reason in ("end_turn", "max_tokens"):
+                    fallback_text = "".join(
+                        block.text for block in response.content if getattr(block, "type", None) == "text"
+                    )
+                    break  # no tool call; take what we have
+
+                # stop_reason == "tool_use":
+                # 1) append the assistant turn VERBATIM - thinking + tool_use blocks unchanged.
+                messages.append({"role": "assistant", "content": response.content})
+
+                # 2) execute every tool_use block; collect ALL results into ONE user message.
+                tool_results: list[dict[str, Any]] = []
+                terminal = False
+                for block in response.content:
+                    if block.type == "thinking":
+                        text = getattr(block, "thinking", "") or ""
+                        if text:
+                            yield {"type": "thinking", "text": text}
+                        continue
+                    if block.type != "tool_use":
+                        continue
+                    if block.name == "propose_edits":
+                        proposed_edits_data = block.input.get("edits", [])
+                        terminal = True
+                        tool_results.append({"type": "tool_result", "tool_use_id": block.id, "content": "recorded"})
+                        continue
+
+                    yield self._tool_call_event(block.name, block.input)
+                    ok, payload = self._dispatch_search_tool(block.name, block.input)
+                    tool_results.append(
+                        {"type": "tool_result", "tool_use_id": block.id, "content": payload, "is_error": not ok}
+                    )
+                    yield self._tool_result_event(block.name, ok, payload)
+
+                messages.append({"role": "user", "content": tool_results})  # single user message
+                if terminal:
+                    break
+                turns += 1
         except Exception as e:
             print(f"Error calling Claude API: {e}")
             yield {"type": "model_error", "error": str(e)}
             yield {
                 "type": "analyzed",
-                "proposal": EditProposal(id=str(uuid.uuid4()), article=article, edits=[], status="rejected", reviewer_notes=f"Error: {e}"),
+                "proposal": EditProposal(
+                    id=str(uuid.uuid4()), article=article, edits=[], status="rejected", reviewer_notes=f"Error: {e}"
+                ),
             }
+            return
+
+        if proposed_edits_data is None and fallback_text:
+            proposed_edits_data = self._extract_json_from_response(fallback_text)
+
+        proposed_edits = self._build_edits_from_data(article, proposed_edits_data or [])
+        proposal = EditProposal(id=str(uuid.uuid4()), article=article, edits=proposed_edits, status="pending")
+        yield {"type": "model_done", "edit_count": len(proposed_edits)}
+        yield {"type": "analyzed", "proposal": proposal}
 
     def analyze_article(self, article: Article) -> EditProposal:
         """Analyze an article and propose minimal edits.

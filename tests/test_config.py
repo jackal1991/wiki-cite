@@ -17,6 +17,8 @@ def test_agent_config_defaults():
     config = AgentConfig()
     assert config.model == "claude-sonnet-5"
     assert config.max_edits_per_article == 15
+    assert config.max_search_turns == 5
+    assert config.search_results_per_query == 3
 
 
 def test_guardrails_config_defaults():
@@ -50,6 +52,8 @@ def test_config_load_from_yaml():
 agent:
   model: "test-model"
   max_edits_per_article: 20
+  max_search_turns: 7
+  search_results_per_query: 4
 
 guardrails:
   max_new_words: 100
@@ -65,6 +69,8 @@ guardrails:
 
             assert config.agent.model == "test-model"
             assert config.agent.max_edits_per_article == 20
+            assert config.agent.max_search_turns == 7
+            assert config.agent.search_results_per_query == 4
             assert config.guardrails.max_new_words == 100
             assert config.guardrails.min_similarity_ratio == 0.9
         finally:
