@@ -209,6 +209,20 @@ def create_app() -> Flask:
             }
         )
 
+    @app.route("/api/categories/search")
+    def search_categories():
+        """Search Wikipedia Category-namespace page names by prefix, for the
+        dashboard's search-and-select. Read-only; no local index."""
+        q = request.args.get("q", "").strip()
+        if not q:
+            return jsonify({"error": "query parameter 'q' is required"}), 400
+        try:
+            pages = article_picker.site.allpages(prefix=q, namespace=14, limit=20)
+            names = [p.name.split(":", 1)[-1] for p in pages]
+        except Exception as e:
+            return jsonify({"error": str(e)}), 502
+        return jsonify({"categories": names})
+
     @app.route("/api/proposals/<proposal_id>/edits/<int:edit_index>/source-preview")
     def source_preview(proposal_id: str, edit_index: int):
         """Fetch a preview (title/description/site) of the source cited by an edit.
