@@ -30,6 +30,13 @@ def create_app() -> Flask:
     # In-memory storage for proposals (in production, use a database)
     proposals: dict[str, EditProposal] = {}
 
+    # In-memory include/exclude category override, seeded from config.yaml. Mutating
+    # this never touches config.yaml, so it resets to the config defaults on restart.
+    category_overrides = {
+        "include": list(config.article_selection.include_categories),
+        "exclude": list(config.article_selection.exclude_categories),
+    }
+
     # Initialize services
     seen_store = SeenStore(config.seen_db_path)
     article_picker = ArticlePicker(seen_store=seen_store)
@@ -58,7 +65,11 @@ def create_app() -> Flask:
             yield {"type": "scan_start", "max": max_scan, "category": config.article_selection.category}
 
             found_any = False
-            for candidate in article_picker.fetch_candidates(limit=max_scan):
+            for candidate in article_picker.fetch_candidates(
+                limit=max_scan,
+                include_categories=category_overrides["include"],
+                exclude_categories=category_overrides["exclude"],
+            ):
                 found_any = True
                 scanned = len(skipped) + 1
                 # Show the same focused excerpt Claude sees: lead + flagged paragraphs.
@@ -222,6 +233,28 @@ def create_app() -> Flask:
         except Exception as e:
             return jsonify({"error": str(e)}), 502
         return jsonify({"categories": names})
+
+    def _valid_category_list(value) -> bool:
+        return isinstance(value, list) and all(isinstance(x, str) for x in value)
+
+    @app.route("/api/settings/categories")
+    def get_category_settings():
+        """Return the active include/exclude lists (override if set, else the
+        config.yaml defaults it was seeded from)."""
+        return jsonify({"include": category_overrides["include"], "exclude": category_overrides["exclude"]})
+
+    @app.route("/api/settings/categories", methods=["POST"])
+    def set_category_settings():
+        """Update the in-memory override. Rejects malformed payloads without
+        mutating the previous override."""
+        data = request.get_json(silent=True) or {}
+        include = data.get("include", category_overrides["include"])
+        exclude = data.get("exclude", category_overrides["exclude"])
+        if not _valid_category_list(include) or not _valid_category_list(exclude):
+            return jsonify({"error": "include and exclude must be lists of strings"}), 400
+        category_overrides["include"] = list(include)
+        category_overrides["exclude"] = list(exclude)
+        return jsonify({"include": category_overrides["include"], "exclude": category_overrides["exclude"]})
 
     @app.route("/api/proposals/<proposal_id>/edits/<int:edit_index>/source-preview")
     def source_preview(proposal_id: str, edit_index: int):

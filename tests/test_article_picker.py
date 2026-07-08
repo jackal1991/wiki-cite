@@ -210,6 +210,40 @@ def test_fetch_candidates_skips_seen(mock_site):
     seen_page.text.assert_not_called()  # seen skip happens before any page fetch
 
 
+def test_fetch_candidates_passes_category_overrides(mock_site):
+    """A mock page in an excluded category is filtered out when fetch_candidates
+    is called with an exclude_categories override."""
+    picker = ArticlePicker(site=mock_site)
+
+    sports_category = Mock()
+    sports_category.name = "Category:Sports"
+    excluded_page = Mock()
+    excluded_page.name = "Excluded Article"
+    excluded_page.redirect = False
+    excluded_page.namespace = 0
+    excluded_page.protection = {}
+    excluded_page.revision = "1"
+    excluded_page.text = Mock(return_value="A claim about the subject.{{Citation needed}}")
+    excluded_page.categories = Mock(return_value=[sports_category])
+
+    history_category = Mock()
+    history_category.name = "Category:History"
+    included_page = Mock()
+    included_page.name = "Included Article"
+    included_page.redirect = False
+    included_page.namespace = 0
+    included_page.protection = {}
+    included_page.revision = "2"
+    included_page.text = Mock(return_value="A fresh and notable claim about the subject.{{Citation needed}}")
+    included_page.categories = Mock(return_value=[history_category])
+
+    mock_site.pages = {"Category:All_articles_with_unsourced_statements": [excluded_page, included_page]}
+
+    titles = [c.title for c in picker.fetch_candidates(limit=5, exclude_categories=["Sports"])]
+    assert "Excluded Article" not in titles
+    assert "Included Article" in titles
+
+
 def test_category_filter_include_only_overlap_passes():
     """Include-only, article overlaps -> passes."""
     ok, reason = ArticlePicker.category_filter(["History"], ["History"], [])

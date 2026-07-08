@@ -310,11 +310,19 @@ class ArticlePicker:
 
         return True, ""
 
-    def fetch_candidates(self, limit: int = 100) -> Iterator[CandidateArticle]:
+    def fetch_candidates(
+        self,
+        limit: int = 100,
+        include_categories: list[str] | None = None,
+        exclude_categories: list[str] | None = None,
+    ) -> Iterator[CandidateArticle]:
         """Fetch candidate articles from Wikipedia.
 
         Args:
             limit: Maximum number of candidates to fetch
+            include_categories: optional override for the configured include list
+                (``None`` means "use config"; pass ``[]`` to explicitly disable).
+            exclude_categories: optional override for the configured exclude list.
 
         Yields:
             CandidateArticle objects
@@ -340,7 +348,11 @@ class ArticlePicker:
                 continue
 
             # Check if this is a candidate
-            is_candidate, _ = self.is_candidate(page)
+            is_candidate, _ = self.is_candidate(
+                page,
+                include_categories=include_categories,
+                exclude_categories=exclude_categories,
+            )
             if not is_candidate:
                 continue
 
