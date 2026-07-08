@@ -45,10 +45,7 @@
             <div class="agent-view-body" id="agent-body">
                 <div style="color:#6f9a80;">Connecting to the agent…</div>
             </div>
-            <div class="agent-view-foot">
-                <span class="dot"></span>
-                <span class="action" id="agent-action">Starting up…</span>
-            </div>
+            <div class="agent-log" id="agent-log"></div>
         </div>
 
         <div class="pipeline" id="pipeline"></div>
@@ -65,12 +62,17 @@
         'Selecting candidate articles',
         'Screening for a sourceable claim',
         'Reading article wikitext',
+        'Searching for sources',
         'Analyzing with Claude',
         'Preparing your review',
     ];
+    const DONE_PHASE = PIPELINE_STEPS.length;  // all steps complete
+
+    const API_NAMES = { semantic_scholar: 'Semantic Scholar', crossref: 'CrossRef', web_search: 'Brave' };
 
     // Live scan state, updated from streamed events.
-    const scan = { phase: 0, scanned: 0, skipped: 0, title: '', rev: '', model: '', category: '', preview: [], sweeping: false };
+    const scan = { phase: 0, scanned: 0, skipped: 0, title: '', rev: '', model: '', category: '', apis: '', preview: [], sweeping: false };
+    let agentLog = [];
     let evtSource = null;
 
     function escapeHtml(text) {
@@ -79,11 +81,11 @@
         return div.innerHTML;
     }
 
-    function prettyCategory(cat) {
-        return (cat || '').replace(/^Category:/, '').replace(/_/g, ' ');
-    }
+    function prettyCategory(cat) { return (cat || '').replace(/^Category:/, '').replace(/_/g, ' '); }
+    function prettyApis(apis) { return (apis || []).map(a => API_NAMES[a] || a).join(' · '); }
+    function truncate(s, n) { s = s || ''; return s.length > n ? s.slice(0, n - 1) + '…' : s; }
 
-    // ---------- Working view rendering ----------
+    // ---------- Viewport (title + excerpt) ----------
     function colorizeWikitext(line) {
         let s = escapeHtml(line);
         s = s.replace(/\[\[[^\]]+\]\]/g, '<span class="wl">$&</span>');
@@ -93,29 +95,42 @@
 
     function renderViewport() {
         const body = document.getElementById('agent-body');
-        const file = document.getElementById('agent-file');
-        file.textContent = scan.title
+        document.getElementById('agent-file').textContent = scan.title
             ? `agent view · ${scan.title.replace(/ /g, '_')}.wikitext`
             : 'agent view · waiting…';
 
+        const titleHtml = scan.title ? `<div class="agent-view-title">${escapeHtml(scan.title)}</div>` : '';
         if (!scan.preview.length) {
-            body.innerHTML = '<div style="color:#6f9a80;">Loading candidate…</div>';
+            body.innerHTML = titleHtml + '<div style="color:#6f9a80;">Loading candidate…</div>';
             return;
         }
         const sweep = scan.sweeping ? '<div class="agent-view-sweep"></div>' : '';
         const lines = scan.preview.map((l, i) =>
-            `<div><span class="ln">${i + 1}</span>&nbsp;&nbsp;${colorizeWikitext(l)}${scan.sweeping && i === scan.preview.length - 1 ? '<span class="caret">▌</span>' : ''}</div>`
+            `<div class="row">${colorizeWikitext(l)}${scan.sweeping && i === scan.preview.length - 1 ? '<span class="caret">▌</span>' : ''}</div>`
         ).join('');
-        body.innerHTML = sweep + lines;
+        body.innerHTML = sweep + titleHtml + lines;
     }
 
+    // ---------- Streaming activity log ----------
+    function pushLog(cls, glyph, msg) {
+        agentLog.push({ cls, glyph, msg });
+        if (agentLog.length > 9) agentLog.shift();
+        const el = document.getElementById('agent-log');
+        el.innerHTML = agentLog.map((e, i) =>
+            `<div class="agent-log-line ${e.cls}${i === agentLog.length - 1 ? ' is-new' : ''}"><span class="glyph">${e.glyph}</span><span class="msg">${escapeHtml(e.msg)}</span></div>`
+        ).join('');
+        el.scrollTop = el.scrollHeight;
+    }
+
+    // ---------- Pipeline ----------
     function renderPipeline() {
         const details = [
             scan.category ? prettyCategory(scan.category) : 'Querying category members…',
             `scanned ${scan.scanned} · skipped ${scan.skipped}`,
             scan.title ? `${scan.title}${scan.rev ? ' · rev ' + scan.rev : ''}` : 'Downloading revision…',
+            scan.apis || 'Semantic Scholar · CrossRef · Brave',
             scan.model ? `${scan.model} · minimal-edit agent` : 'minimal-edit agent',
-            scan.phase >= 4 ? 'Opening review…' : 'Awaiting a confident citation',
+            scan.phase >= DONE_PHASE ? 'Opening review…' : 'Awaiting a confident citation',
         ];
         const el = document.getElementById('pipeline');
         el.innerHTML = PIPELINE_STEPS.map((label, i) => {
@@ -130,10 +145,6 @@
                     </div>
                 </div>`;
         }).join('');
-    }
-
-    function setAction(text) {
-        document.getElementById('agent-action').textContent = text;
     }
 
     function showWorkingView() {
@@ -163,10 +174,10 @@
             case 'scan_start':
                 scan.category = evt.category;
                 scan.phase = 1;
-                setAction(`Loading candidates from “${prettyCategory(evt.category)}”…`);
+                pushLog('', '»', `Loading candidates from “${prettyCategory(evt.category)}”…`);
                 renderPipeline();
                 break;
-            case 'candidate':
+            case 'candidate': {
                 scan.scanned = evt.scanned;
                 scan.skipped = evt.skipped;
                 scan.title = evt.title;
@@ -175,36 +186,60 @@
                 scan.sweeping = false;
                 scan.phase = 2;
                 const nClaims = (evt.claims || []).length;
-                setAction(`Reading “${evt.title}” — ${nClaims} claim${nClaims === 1 ? '' : 's'} flagged {{Citation needed}}`);
+                pushLog('', '▸', `Reading “${evt.title}” — ${nClaims} claim${nClaims === 1 ? '' : 's'} flagged {{Citation needed}}`);
                 renderViewport();
                 renderPipeline();
                 break;
+            }
             case 'analyzing':
                 scan.model = evt.model;
                 scan.sweeping = true;
                 scan.phase = 3;
-                setAction(`Analyzing “${evt.title}” with ${evt.model} — sourcing flagged claims…`);
                 renderViewport();
                 renderPipeline();
+                break;
+            case 'searching':
+                scan.apis = prettyApis(evt.apis);
+                scan.phase = 3;
+                pushLog('search', '⌕', `Searching ${scan.apis} for “${truncate(evt.claim, 60)}”…`);
+                renderPipeline();
+                break;
+            case 'source_found':
+                pushLog('found', '✓', `${truncate(evt.source_title, 64)} · ${evt.count} source${evt.count === 1 ? '' : 's'}`);
+                break;
+            case 'source_none':
+                pushLog('', '·', 'No reliable source found for that claim');
+                break;
+            case 'model_call':
+                scan.model = evt.model;
+                scan.phase = 4;
+                pushLog('model', '⚡', `Calling ${evt.model} — proposing minimal edits…`);
+                renderPipeline();
+                break;
+            case 'model_done':
+                pushLog('model', '✎', `${evt.edit_count} edit${evt.edit_count === 1 ? '' : 's'} proposed`);
+                break;
+            case 'model_error':
+                pushLog('skip', '!', `Model error: ${truncate(evt.error, 70)}`);
                 break;
             case 'skipped':
                 scan.skipped += 1;
                 scan.sweeping = false;
                 scan.phase = 1;
-                setAction(`Skipped “${evt.title}” — ${evt.reason}. Trying another…`);
+                pushLog('skip', '✗', `Skipped “${evt.title}” — ${evt.reason}. Trying another…`);
                 renderViewport();
                 renderPipeline();
                 break;
             case 'selected':
                 scan.sweeping = false;
-                scan.phase = 5;
-                document.getElementById('working-title').textContent = `Found ${evt.edit_count} edits on “${evt.title}”`;
+                scan.phase = DONE_PHASE;
+                document.getElementById('working-title').textContent = `Found ${evt.edit_count} edit${evt.edit_count === 1 ? '' : 's'} on “${evt.title}”`;
                 document.getElementById('working-sub').textContent = 'Opening the review — nothing is published until you approve it.';
-                setAction(`Selected “${evt.title}” · ${evt.edit_count} edits ready for review`);
+                pushLog('select', '★', `Selected “${evt.title}” · ${evt.edit_count} edits — opening review`);
                 renderViewport();
                 renderPipeline();
                 if (evtSource) { evtSource.close(); evtSource = null; }
-                setTimeout(() => { window.location.href = `/review/${evt.proposal_id}`; }, 900);
+                setTimeout(() => { window.location.href = `/review/${evt.proposal_id}`; }, 1100);
                 break;
             case 'failed': {
                 let message = evt.error || 'No article found';
@@ -224,10 +259,12 @@
         btn.classList.add('is-disabled');
         document.getElementById('error').style.display = 'none';
 
-        Object.assign(scan, { phase: 0, scanned: 0, skipped: 0, title: '', rev: '', model: '', category: '', preview: [], sweeping: false });
+        Object.assign(scan, { phase: 0, scanned: 0, skipped: 0, title: '', rev: '', model: '', category: '', apis: '', preview: [], sweeping: false });
+        agentLog = [];
+        document.getElementById('agent-log').innerHTML = '';
         document.getElementById('working-title').textContent = 'Finding an article we can confidently source…';
         document.getElementById('working-sub').textContent = 'Watch below: the agent reads a short unsourced stub and proposes only minimal, sourced edits for claims already in the text.';
-        setAction('Starting up…');
+        pushLog('', '»', 'Starting up…');
         showWorkingView();
 
         evtSource = new EventSource('/api/fetch-article/stream');
@@ -237,7 +274,7 @@
         };
         evtSource.onerror = () => {
             // Stream closed unexpectedly (and not already finished/redirecting).
-            if (evtSource && scan.phase < 5) returnToQueue('Lost connection to the agent. Please try again.');
+            if (evtSource && scan.phase < DONE_PHASE) returnToQueue('Lost connection to the agent. Please try again.');
         };
     }
 

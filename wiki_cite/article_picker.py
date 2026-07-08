@@ -19,6 +19,58 @@ CITATION_NEEDED_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Prefixes for wikitext blocks that are not prose (templates, tables, media,
+# categories, headings) — skipped when locating the lead paragraph.
+_NON_PROSE_PREFIXES = ("{{", "{|", "|", "!", "==", "[[category", "[[file", "[[image", "#redirect", "<!--")
+
+
+def _lead_block(blocks: list[str]) -> str:
+    """Return the first prose block (the lead paragraph), or "" if none."""
+    for block in blocks:
+        if not block.lstrip().lower().startswith(_NON_PROSE_PREFIXES):
+            return block
+    return ""
+
+
+def _preceding_heading(blocks: list[str], index: int) -> str:
+    """Return the nearest section heading (== … ==) block above ``index``, or ""."""
+    for block in reversed(blocks[:index]):
+        if block.lstrip().startswith("=="):
+            return block
+    return ""
+
+
+def build_focused_excerpt(wikitext: str, max_chars: int = 6000) -> str:
+    """Reduce an article to just what Claude needs to source flagged claims:
+    the lead paragraph plus each flagged section (its heading and the paragraph
+    containing the {{Citation needed}} tag).
+
+    Sending this excerpt instead of the whole article keeps the prompt small and
+    focused. Edits still apply to the full article because they are matched by
+    verbatim ``original_text`` (see ``ClaudeAgent.apply_edits``). Falls back to the
+    (truncated) full text when no structure can be found.
+    """
+    blocks = [b.strip() for b in re.split(r"\n\s*\n", wikitext) if b.strip()]
+    if not blocks:
+        return wikitext.strip()[:max_chars]
+
+    selected: list[str] = []
+    lead = _lead_block(blocks)
+    if lead:
+        selected.append(lead)
+    for index, block in enumerate(blocks):
+        if not CITATION_NEEDED_RE.search(block):
+            continue
+        heading = _preceding_heading(blocks, index)
+        for piece in ([heading] if heading else []) + [block]:
+            if piece and piece not in selected:
+                selected.append(piece)
+
+    if not selected:
+        return wikitext.strip()[:max_chars]
+
+    return "\n\n[…]\n\n".join(selected)[:max_chars]
+
 
 class ArticlePicker:
     """Picks Wikipedia articles that need citation cleanup."""

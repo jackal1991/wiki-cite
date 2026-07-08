@@ -3,7 +3,7 @@
 import pytest
 from unittest.mock import Mock
 
-from wiki_cite.article_picker import ArticlePicker
+from wiki_cite.article_picker import ArticlePicker, build_focused_excerpt
 
 
 @pytest.fixture
@@ -165,6 +165,25 @@ def test_is_candidate_rejects_overlong_article(picker):
     is_candidate, reason = picker.is_candidate(page)
     assert is_candidate is False
     assert "too long" in reason.lower()
+
+
+def test_build_focused_excerpt_keeps_lead_and_problem_para():
+    """Excerpt keeps the lead and the flagged paragraph, drops the rest."""
+    wikitext = "'''Widget''' is a small mechanical part used in machines.\n\n== History ==\n\nWidgets were mass-produced from the 1920s onward. Sales peaked in 1955.{{Citation needed}}\n\n== Uses ==\n\nThey appear in clocks and radios. This paragraph is unrelated filler about uses.\n"
+    excerpt = build_focused_excerpt(wikitext)
+    assert "Widget is a small mechanical part" in excerpt.replace("'''", "")
+    assert "Sales peaked in 1955.{{Citation needed}}" in excerpt
+    assert "== History ==" in excerpt  # section heading of the flagged paragraph
+    assert "unrelated filler" not in excerpt
+    assert "[…]" in excerpt
+
+
+def test_build_focused_excerpt_skips_leading_infobox():
+    """The lead is the first prose block, not a leading template/infobox."""
+    wikitext = "{{Infobox thing\n|name=Test\n}}\n\n'''Test''' is the subject.{{cn}}\n"
+    excerpt = build_focused_excerpt(wikitext)
+    assert "Infobox" not in excerpt
+    assert "Test is the subject" in excerpt.replace("'''", "")
 
 
 def test_is_protected_with_edit_protection(picker):

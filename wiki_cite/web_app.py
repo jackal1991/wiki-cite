@@ -11,7 +11,7 @@ from flask import Flask, Response, jsonify, render_template, request, stream_wit
 from flask_cors import CORS
 
 from wiki_cite.agent import ClaudeAgent
-from wiki_cite.article_picker import ArticlePicker
+from wiki_cite.article_picker import ArticlePicker, build_focused_excerpt
 from wiki_cite.config import get_config
 from wiki_cite.models import Article, EditProposal
 from wiki_cite.source_finder import SourceFinder, extract_citation_url
@@ -59,7 +59,9 @@ def create_app() -> Flask:
             for candidate in article_picker.fetch_candidates(limit=max_scan):
                 found_any = True
                 scanned = len(skipped) + 1
-                preview = [line for line in candidate.wikitext.strip().splitlines() if line.strip()][:6]
+                # Show the same focused excerpt Claude sees: lead + flagged paragraphs.
+                excerpt = build_focused_excerpt(candidate.wikitext)
+                preview = [line for line in excerpt.splitlines() if line.strip()][:14]
 
                 yield {
                     "type": "candidate",
@@ -84,7 +86,13 @@ def create_app() -> Flask:
 
                 yield {"type": "analyzing", "title": candidate.title, "model": config.agent.model, "claims": candidate.citation_needed_claims[:3]}
 
-                proposal = agent.analyze_article(article)
+                # Stream the agent's own progress (source searches, model call, edits).
+                proposal = None
+                for event in agent.analyze_article_events(article):
+                    if event["type"] == "analyzed":
+                        proposal = event["proposal"]
+                    else:
+                        yield {**event, "title": candidate.title}
 
                 if proposal.has_confident_citation():
                     proposals[proposal.id] = proposal
