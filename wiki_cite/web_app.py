@@ -29,6 +29,7 @@ def create_app() -> Flask:
 
     # In-memory storage for proposals (in production, use a database)
     proposals: dict[str, EditProposal] = {}
+    app.proposals = proposals  # test-only seam for seeding proposals directly
 
     # In-memory include/exclude category override, seeded from config.yaml. Mutating
     # this never touches config.yaml, so it resets to the config defaults on restart.
@@ -317,6 +318,18 @@ def create_app() -> Flask:
 
         proposal.edits[edit_index].approved = True
 
+        edit = proposal.edits[edit_index]
+        seen_store.record_outcome(
+            proposal.article.title,
+            proposal.article.revision_id,
+            "approved",
+            edit_type=edit.edit_type.value,
+            confidence=edit.confidence,
+            source_type=edit.source.source_type.value if edit.source else None,
+            reliability=edit.source.reliability.value if edit.source and edit.source.reliability else None,
+            policy_reference=edit.policy_reference,
+        )
+
         return jsonify({"success": True})
 
     @app.route("/api/proposals/<proposal_id>/reject-edit/<int:edit_index>", methods=["POST"])
@@ -331,6 +344,18 @@ def create_app() -> Flask:
             return jsonify({"error": "Invalid edit index"}), 400
 
         proposal.edits[edit_index].approved = False
+
+        edit = proposal.edits[edit_index]
+        seen_store.record_outcome(
+            proposal.article.title,
+            proposal.article.revision_id,
+            "rejected",
+            edit_type=edit.edit_type.value,
+            confidence=edit.confidence,
+            source_type=edit.source.source_type.value if edit.source else None,
+            reliability=edit.source.reliability.value if edit.source and edit.source.reliability else None,
+            policy_reference=edit.policy_reference,
+        )
 
         return jsonify({"success": True})
 
