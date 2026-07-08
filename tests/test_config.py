@@ -3,6 +3,9 @@
 from pathlib import Path
 import tempfile
 
+import pytest
+from pydantic import ValidationError
+
 from wiki_cite.config import (
     Config,
     AgentConfig,
@@ -44,6 +47,13 @@ def test_article_selection_config_defaults():
     assert config.max_body_lines == 4
     assert config.exclude_blp is True
     assert config.exclude_protected is True
+
+
+def test_article_selection_category_lists_default_empty():
+    """Test include/exclude category lists default to empty (no-op filtering)."""
+    config = ArticleSelectionConfig()
+    assert config.include_categories == []
+    assert config.exclude_categories == []
 
 
 def test_config_load_from_yaml():
@@ -95,3 +105,42 @@ def test_config_with_environment_variables(monkeypatch):
 
     assert config.anthropic_api_key == "test-api-key-123"
     assert config.wikipedia_username == "testuser"
+
+
+def test_config_load_category_lists_from_yaml():
+    """Test include/exclude category lists load from YAML into ArticleSelectionConfig."""
+    yaml_content = """
+article_selection:
+  include_categories: [History]
+  exclude_categories: [Sports]
+"""
+
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+        f.write(yaml_content)
+        f.flush()
+
+        try:
+            config = Config.load(f.name)
+
+            assert config.article_selection.include_categories == ["History"]
+            assert config.article_selection.exclude_categories == ["Sports"]
+        finally:
+            Path(f.name).unlink()
+
+
+def test_article_selection_non_list_categories_rejected():
+    """Test a scalar value for include_categories raises a ValidationError."""
+    yaml_content = """
+article_selection:
+  include_categories: "History"
+"""
+
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+        f.write(yaml_content)
+        f.flush()
+
+        try:
+            with pytest.raises(ValidationError):
+                Config.load(f.name)
+        finally:
+            Path(f.name).unlink()
