@@ -12,6 +12,13 @@ import mwparserfromhell
 from wiki_cite.config import get_config
 from wiki_cite.models import CandidateArticle
 
+# Matches inline {{Citation needed}} tags and its common redirects ({{cn}}, {{fact}}).
+# These are the signal Citation Hunt surfaces: a specific claim needing a source.
+CITATION_NEEDED_RE = re.compile(
+    r"\{\{\s*(?:citation[ _-]needed|cn|fact|cite[ _-]needed)\b[^{}]*\}\}",
+    re.IGNORECASE,
+)
+
 
 class ArticlePicker:
     """Picks Wikipedia articles that need citation cleanup."""
@@ -95,6 +102,38 @@ class ArticlePicker:
 
         return len(lines)
 
+    def extract_citation_needed_claims(self, wikitext: str) -> list[str]:
+        """Extract the claims tagged with {{Citation needed}} (or {{cn}}/{{fact}}).
+
+        For each inline citation-needed tag, returns the sentence immediately
+        preceding it — the specific unsourced claim a reviewer would source.
+        This mirrors what the Citation Hunt tool surfaces.
+        """
+        claims: list[str] = []
+        seen: set[str] = set()
+        for match in CITATION_NEEDED_RE.finditer(wikitext):
+            claim = self._trailing_sentence(wikitext[: match.start()])
+            if claim and claim not in seen:
+                seen.add(claim)
+                claims.append(claim)
+        return claims
+
+    @staticmethod
+    def _trailing_sentence(text: str) -> str:
+        """Return the last clean sentence of a wikitext fragment (or "")."""
+        text = re.sub(r"<ref[^>]*>.*?</ref>", "", text, flags=re.DOTALL | re.IGNORECASE)
+        text = re.sub(r"<ref[^>]*/>", "", text, flags=re.IGNORECASE)
+        text = re.sub(r"\{\{[^{}]*\}\}", "", text)
+        text = re.sub(r"\[\[(?:[^|\]]+\|)?([^\]]+)\]\]", r"\1", text)
+        text = re.sub(r"'{2,}", "", text)
+        text = re.sub(r"==+[^=]+=+", "", text)
+
+        parts = [p.strip() for p in re.split(r"(?<=[.!?])\s+", text.strip()) if p.strip()]
+        if not parts:
+            return ""
+        claim = re.sub(r"\s+", " ", parts[-1].strip().strip("*#: ")).strip()
+        return claim if len(claim) > 20 else ""
+
     def is_protected(self, page) -> bool:
         """Check if a page is protected from editing.
 
@@ -139,6 +178,10 @@ class ArticlePicker:
         if page.redirect:
             return False, "redirect"
 
+        # Only main-namespace articles (namespace 0) — skip Category:/Template:/etc.
+        if getattr(page, "namespace", 0) != 0:
+            return False, "not an article namespace"
+
         # Check protection
         if self.config.article_selection.exclude_protected and self.is_protected(page):
             return False, "protected"
@@ -158,13 +201,9 @@ class ArticlePicker:
         if self.config.article_selection.exclude_blp and self.is_blp(page_text, categories):
             return False, "BLP article"
 
-        # Count body lines
-        body_lines = self.count_body_lines(page_text)
-        if body_lines > self.config.article_selection.max_body_lines:
-            return False, f"too long ({body_lines} lines)"
-
-        if body_lines == 0:
-            return False, "no body text"
+        # Require at least one inline {{Citation needed}} claim to source.
+        if not self.extract_citation_needed_claims(page_text):
+            return False, "no citation-needed tag"
 
         return True, ""
 
@@ -217,6 +256,7 @@ class ArticlePicker:
                     categories=categories,
                     has_infobox=has_infobox,
                     fetched_at=datetime.now(),
+                    citation_needed_claims=self.extract_citation_needed_claims(page_text),
                 )
 
                 yield candidate

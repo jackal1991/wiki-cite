@@ -44,7 +44,7 @@ class WikipediaConfig(BaseSettings):
 class ArticleSelectionConfig(BaseSettings):
     """Configuration for article selection criteria."""
 
-    category: str = "Category:Articles_lacking_sources"
+    category: str = "Category:All_articles_with_unsourced_statements"
     max_body_lines: int = 4
     exclude_blp: bool = True
     exclude_protected: bool = True

@@ -3,7 +3,7 @@
 {% block title %}Review Queue — WikiCite{% endblock %}
 
 {% block content %}
-<main>
+<main id="queue-view">
     <div class="panel">
         <div class="eyebrow">Review queue</div>
         <h1 class="page-title">Minimal, sourced edits — <span class="accent">approved by you</span></h1>
@@ -15,7 +15,6 @@
     </div>
 
     <div id="error" class="banner error" style="display:none; margin-top:20px;"></div>
-    <div id="loading" class="loading" style="display:none;"></div>
 
     <div class="section-head">
         <h2>In your queue</h2>
@@ -24,51 +23,225 @@
 
     <div id="proposals-list"></div>
 </main>
+
+<!-- Over-the-shoulder working view -->
+<div class="working-wrap" id="working-view" style="display:none;">
+    <div class="working-card">
+        <div class="working-head">
+            <div class="working-spinner"></div>
+            <div style="min-width:0;">
+                <div class="eyebrow">Working</div>
+                <h1 id="working-title">Finding an article we can confidently source…</h1>
+            </div>
+        </div>
+        <p class="working-sub" id="working-sub">Watch below: the agent reads a short unsourced stub and proposes only minimal, sourced edits for claims already in the text.</p>
+
+        <div class="agent-view">
+            <div class="agent-view-bar">
+                <span class="agent-view-dots"><span></span><span></span><span></span></span>
+                <span class="agent-view-file" id="agent-file">agent view · waiting…</span>
+                <span class="agent-view-live"><span class="dot"></span> live</span>
+            </div>
+            <div class="agent-view-body" id="agent-body">
+                <div style="color:#6f9a80;">Connecting to the agent…</div>
+            </div>
+            <div class="agent-view-foot">
+                <span class="dot"></span>
+                <span class="action" id="agent-action">Starting up…</span>
+            </div>
+        </div>
+
+        <div class="pipeline" id="pipeline"></div>
+
+        <div class="working-note">It may check several stubs before finding one worth your review. Living-person and protected pages are skipped automatically.</div>
+    </div>
+</div>
 {% endblock %}
 
 {% block scripts %}
+{% raw %}
 <script>
+    const PIPELINE_STEPS = [
+        'Selecting candidate articles',
+        'Screening for a sourceable claim',
+        'Reading article wikitext',
+        'Analyzing with Claude',
+        'Preparing your review',
+    ];
+
+    // Live scan state, updated from streamed events.
+    const scan = { phase: 0, scanned: 0, skipped: 0, title: '', rev: '', model: '', category: '', preview: [], sweeping: false };
+    let evtSource = null;
+
     function escapeHtml(text) {
         const div = document.createElement('div');
         div.textContent = text == null ? '' : text;
         return div.innerHTML;
     }
 
-    async function fetchNewArticle() {
-        const loadingDiv = document.getElementById('loading');
-        const errorDiv = document.getElementById('error');
+    function prettyCategory(cat) {
+        return (cat || '').replace(/^Category:/, '').replace(/_/g, ' ');
+    }
+
+    // ---------- Working view rendering ----------
+    function colorizeWikitext(line) {
+        let s = escapeHtml(line);
+        s = s.replace(/\[\[[^\]]+\]\]/g, '<span class="wl">$&</span>');
+        s = s.replace(/\{\{\s*(?:citation needed|cn|fact|citation-needed)[^}]*\}\}/gi, '<span class="claim">$&</span>');
+        return s;
+    }
+
+    function renderViewport() {
+        const body = document.getElementById('agent-body');
+        const file = document.getElementById('agent-file');
+        file.textContent = scan.title
+            ? `agent view · ${scan.title.replace(/ /g, '_')}.wikitext`
+            : 'agent view · waiting…';
+
+        if (!scan.preview.length) {
+            body.innerHTML = '<div style="color:#6f9a80;">Loading candidate…</div>';
+            return;
+        }
+        const sweep = scan.sweeping ? '<div class="agent-view-sweep"></div>' : '';
+        const lines = scan.preview.map((l, i) =>
+            `<div><span class="ln">${i + 1}</span>&nbsp;&nbsp;${colorizeWikitext(l)}${scan.sweeping && i === scan.preview.length - 1 ? '<span class="caret">▌</span>' : ''}</div>`
+        ).join('');
+        body.innerHTML = sweep + lines;
+    }
+
+    function renderPipeline() {
+        const details = [
+            scan.category ? prettyCategory(scan.category) : 'Querying category members…',
+            `scanned ${scan.scanned} · skipped ${scan.skipped}`,
+            scan.title ? `${scan.title}${scan.rev ? ' · rev ' + scan.rev : ''}` : 'Downloading revision…',
+            scan.model ? `${scan.model} · minimal-edit agent` : 'minimal-edit agent',
+            scan.phase >= 4 ? 'Opening review…' : 'Awaiting a confident citation',
+        ];
+        const el = document.getElementById('pipeline');
+        el.innerHTML = PIPELINE_STEPS.map((label, i) => {
+            const status = i < scan.phase ? 'done' : (i === scan.phase ? 'active' : 'pending');
+            const marker = status === 'done' ? '✓' : (status === 'active' ? '•' : '');
+            return `
+                <div class="pipe-step ${status}">
+                    <div class="pipe-marker ${status}">${marker}</div>
+                    <div style="flex:1; min-width:0;">
+                        <div class="pipe-label">${label}</div>
+                        <div class="pipe-detail">${escapeHtml(details[i])}</div>
+                    </div>
+                </div>`;
+        }).join('');
+    }
+
+    function setAction(text) {
+        document.getElementById('agent-action').textContent = text;
+    }
+
+    function showWorkingView() {
+        document.getElementById('queue-view').style.display = 'none';
+        document.getElementById('working-view').style.display = 'block';
+        renderViewport();
+        renderPipeline();
+    }
+
+    function returnToQueue(message) {
+        if (evtSource) { evtSource.close(); evtSource = null; }
+        document.getElementById('working-view').style.display = 'none';
+        document.getElementById('queue-view').style.display = 'block';
         const btn = document.getElementById('fetch-btn');
-
-        btn.disabled = true;
-        btn.classList.add('is-disabled');
-        loadingDiv.textContent = 'Scanning candidate articles for one we can confidently source (this may check several before finding a match)…';
-        loadingDiv.style.display = 'block';
-        errorDiv.style.display = 'none';
-
-        try {
-            const response = await fetch('/api/fetch-article');
-            const data = await response.json();
-
-            if (response.ok) {
-                window.location.href = `/review/${data.proposal_id}`;
-                return;
-            }
-            let message = data.error || 'Failed to fetch article';
-            if (data.skipped && data.skipped.length) {
-                message += ` (skipped: ${data.skipped.join(', ')})`;
-            }
+        btn.disabled = false;
+        btn.classList.remove('is-disabled');
+        if (message) {
+            const errorDiv = document.getElementById('error');
             errorDiv.textContent = message;
             errorDiv.style.display = 'block';
-        } catch (error) {
-            errorDiv.textContent = 'Error: ' + error.message;
-            errorDiv.style.display = 'block';
-        } finally {
-            loadingDiv.style.display = 'none';
-            btn.disabled = false;
-            btn.classList.remove('is-disabled');
         }
     }
 
+    // ---------- Event handling ----------
+    function handleEvent(evt) {
+        switch (evt.type) {
+            case 'scan_start':
+                scan.category = evt.category;
+                scan.phase = 1;
+                setAction(`Loading candidates from “${prettyCategory(evt.category)}”…`);
+                renderPipeline();
+                break;
+            case 'candidate':
+                scan.scanned = evt.scanned;
+                scan.skipped = evt.skipped;
+                scan.title = evt.title;
+                scan.rev = evt.revision_id;
+                scan.preview = evt.preview || [];
+                scan.sweeping = false;
+                scan.phase = 2;
+                const nClaims = (evt.claims || []).length;
+                setAction(`Reading “${evt.title}” — ${nClaims} claim${nClaims === 1 ? '' : 's'} flagged {{Citation needed}}`);
+                renderViewport();
+                renderPipeline();
+                break;
+            case 'analyzing':
+                scan.model = evt.model;
+                scan.sweeping = true;
+                scan.phase = 3;
+                setAction(`Analyzing “${evt.title}” with ${evt.model} — sourcing flagged claims…`);
+                renderViewport();
+                renderPipeline();
+                break;
+            case 'skipped':
+                scan.skipped += 1;
+                scan.sweeping = false;
+                scan.phase = 1;
+                setAction(`Skipped “${evt.title}” — ${evt.reason}. Trying another…`);
+                renderViewport();
+                renderPipeline();
+                break;
+            case 'selected':
+                scan.sweeping = false;
+                scan.phase = 5;
+                document.getElementById('working-title').textContent = `Found ${evt.edit_count} edits on “${evt.title}”`;
+                document.getElementById('working-sub').textContent = 'Opening the review — nothing is published until you approve it.';
+                setAction(`Selected “${evt.title}” · ${evt.edit_count} edits ready for review`);
+                renderViewport();
+                renderPipeline();
+                if (evtSource) { evtSource.close(); evtSource = null; }
+                setTimeout(() => { window.location.href = `/review/${evt.proposal_id}`; }, 900);
+                break;
+            case 'failed': {
+                let message = evt.error || 'No article found';
+                if (evt.skipped && evt.skipped.length) message += ` (skipped: ${evt.skipped.join(', ')})`;
+                returnToQueue(message);
+                break;
+            }
+            case 'error':
+                returnToQueue('Error: ' + (evt.error || 'fetch failed'));
+                break;
+        }
+    }
+
+    function fetchNewArticle() {
+        const btn = document.getElementById('fetch-btn');
+        btn.disabled = true;
+        btn.classList.add('is-disabled');
+        document.getElementById('error').style.display = 'none';
+
+        Object.assign(scan, { phase: 0, scanned: 0, skipped: 0, title: '', rev: '', model: '', category: '', preview: [], sweeping: false });
+        document.getElementById('working-title').textContent = 'Finding an article we can confidently source…';
+        document.getElementById('working-sub').textContent = 'Watch below: the agent reads a short unsourced stub and proposes only minimal, sourced edits for claims already in the text.';
+        setAction('Starting up…');
+        showWorkingView();
+
+        evtSource = new EventSource('/api/fetch-article/stream');
+        evtSource.onmessage = (e) => {
+            try { handleEvent(JSON.parse(e.data)); }
+            catch (err) { /* ignore malformed keep-alive */ }
+        };
+        evtSource.onerror = () => {
+            // Stream closed unexpectedly (and not already finished/redirecting).
+            if (evtSource && scan.phase < 5) returnToQueue('Lost connection to the agent. Please try again.');
+        };
+    }
+
+    // ---------- Queue rendering ----------
     function proposalCard(p) {
         const isPushed = p.status === 'pushed';
         const statusClass = isPushed ? 'status-pill pushed' : 'status-pill';
@@ -94,13 +267,10 @@
     async function loadProposals() {
         const listDiv = document.getElementById('proposals-list');
         const countEl = document.getElementById('proposal-count');
-
         try {
             const response = await fetch('/api/proposals');
             const proposals = await response.json();
-
             countEl.textContent = proposals.length;
-
             if (proposals.length === 0) {
                 listDiv.innerHTML = '<div class="panel" style="text-align:center; color:#7a8271;">No proposals yet. Click <strong>Fetch new article</strong> to get started.</div>';
                 return;
@@ -113,4 +283,5 @@
 
     loadProposals();
 </script>
+{% endraw %}
 {% endblock %}

@@ -44,6 +44,7 @@ def cmd_analyze_article(args):
             url=f"https://en.wikipedia.org/wiki/{page.name.replace(' ', '_')}",
             wikitext=page_text,
             revision_id=str(page.revision),
+            citation_needed_claims=ArticlePicker(site=site).extract_citation_needed_claims(page_text),
         )
 
         print(f"Analyzing article: {article.title}")

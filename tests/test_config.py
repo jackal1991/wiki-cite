@@ -38,7 +38,7 @@ def test_wikipedia_config_defaults():
 def test_article_selection_config_defaults():
     """Test article selection configuration defaults."""
     config = ArticleSelectionConfig()
-    assert "Articles_lacking_sources" in config.category
+    assert "unsourced_statements" in config.category
     assert config.max_body_lines == 4
     assert config.exclude_blp is True
     assert config.exclude_protected is True

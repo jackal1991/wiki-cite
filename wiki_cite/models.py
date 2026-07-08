@@ -158,6 +158,7 @@ class CandidateArticle:
     categories: list[str] = field(default_factory=list)
     has_infobox: bool = False
     fetched_at: datetime = field(default_factory=datetime.now)
+    citation_needed_claims: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -169,6 +170,7 @@ class Article:
     wikitext: str
     revision_id: str
     fetched_at: datetime = field(default_factory=datetime.now)
+    citation_needed_claims: list[str] = field(default_factory=list)
 
 
 @dataclass

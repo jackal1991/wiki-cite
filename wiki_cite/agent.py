@@ -144,8 +144,9 @@ class ClaudeAgent:
         Returns:
             String describing available sources
         """
-        # Extract claims from the article
-        claims = self.source_finder.extract_claims(article.wikitext)
+        # Prefer the specific {{Citation needed}} claims when present; these are
+        # the exact statements Wikipedia has flagged as needing a source.
+        claims = article.citation_needed_claims or self.source_finder.extract_claims(article.wikitext)
 
         if not claims:
             return "No clear factual claims found to cite."
@@ -177,6 +178,13 @@ class ClaudeAgent:
         # Build context with available sources
         sources_context = self._build_sources_context(article)
 
+        # When Wikipedia has flagged specific claims with {{Citation needed}},
+        # steer Claude to source exactly those.
+        flagged_section = ""
+        if article.citation_needed_claims:
+            flagged = "\n".join(f'- "{claim}"' for claim in article.citation_needed_claims)
+            flagged_section = f"## Claims tagged {{{{Citation needed}}}}\nThese statements are already in the article and have been flagged as needing a source. Prioritize adding a citation to each one; do not add new information.\n{flagged}\n"
+
         # Prepare the prompt
         user_prompt = f"""Please analyze this Wikipedia article and propose minimal edits:
 
@@ -186,6 +194,7 @@ class ClaudeAgent:
 ## Article Text
 {article.wikitext}
 
+{flagged_section}
 {sources_context}
 
 Remember:

@@ -2,10 +2,12 @@
 Flask web application for reviewing and approving article edits.
 """
 
+import json
 import os
+from collections.abc import Iterator
 from datetime import datetime
 
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, Response, jsonify, render_template, request, stream_with_context
 from flask_cors import CORS
 
 from wiki_cite.agent import ClaudeAgent
@@ -38,58 +40,111 @@ def create_app() -> Flask:
         """Home page showing queue of proposals."""
         return render_template("index.html", proposals=list(proposals.values()))
 
-    @app.route("/api/fetch-article")
-    def fetch_article():
-        """Fetch a new article and generate edit proposals.
+    def scan_events() -> Iterator[dict]:
+        """Scan candidate articles, yielding progress events for the UI.
 
-        Keeps scanning candidate stub articles (up to
-        agent.max_candidates_per_fetch) until it finds one where Claude could
-        confidently source at least one citation, so reviewers aren't shown
-        pages with nothing worth approving.
+        Keeps scanning (up to agent.max_candidates_per_fetch) until it finds one
+        where Claude could confidently source at least one citation. Emits an
+        event per candidate so a reviewer can watch the agent work: which page it
+        is reading, its flagged {{Citation needed}} claims, what it skipped, and
+        the final selection. The terminal event is "selected", "failed", or "error".
         """
-        try:
-            max_scan = config.agent.max_candidates_per_fetch
-            skipped: list[str] = []
+        max_scan = config.agent.max_candidates_per_fetch
+        skipped: list[str] = []
 
+        try:
+            yield {"type": "scan_start", "max": max_scan, "category": config.article_selection.category}
+
+            found_any = False
             for candidate in article_picker.fetch_candidates(limit=max_scan):
+                found_any = True
+                scanned = len(skipped) + 1
+                preview = [line for line in candidate.wikitext.strip().splitlines() if line.strip()][:6]
+
+                yield {
+                    "type": "candidate",
+                    "title": candidate.title,
+                    "url": candidate.url,
+                    "revision_id": candidate.revision_id,
+                    "body_lines": candidate.body_line_count,
+                    "claims": candidate.citation_needed_claims[:3],
+                    "preview": preview,
+                    "scanned": scanned,
+                    "skipped": len(skipped),
+                }
+
                 article = Article(
                     title=candidate.title,
                     url=candidate.url,
                     wikitext=candidate.wikitext,
                     revision_id=candidate.revision_id,
                     fetched_at=candidate.fetched_at,
+                    citation_needed_claims=candidate.citation_needed_claims,
                 )
+
+                yield {"type": "analyzing", "title": candidate.title, "model": config.agent.model, "claims": candidate.citation_needed_claims[:3]}
 
                 proposal = agent.analyze_article(article)
 
                 if proposal.has_confident_citation():
                     proposals[proposal.id] = proposal
-                    return jsonify(
-                        {
-                            "proposal_id": proposal.id,
-                            "article_title": article.title,
-                            "edit_count": len(proposal.edits),
-                            "scanned": len(skipped) + 1,
-                        }
-                    )
-
-                skipped.append(article.title)
-
-            if not skipped:
-                return jsonify({"error": "No candidate articles found"}), 404
-
-            return (
-                jsonify(
-                    {
-                        "error": (f"Scanned {len(skipped)} candidate article(s) but couldn't confidently source a citation for any of them."),
-                        "skipped": skipped,
+                    yield {
+                        "type": "selected",
+                        "proposal_id": proposal.id,
+                        "title": candidate.title,
+                        "edit_count": len(proposal.edits),
+                        "scanned": scanned,
                     }
-                ),
-                404,
-            )
+                    return
 
+                skipped.append(candidate.title)
+                yield {"type": "skipped", "title": candidate.title, "reason": "no confidently-sourced citation", "edit_count": len(proposal.edits)}
+
+            if not found_any:
+                yield {"type": "failed", "error": "No candidate articles found", "skipped": []}
+            else:
+                yield {
+                    "type": "failed",
+                    "error": f"Scanned {len(skipped)} candidate article(s) but couldn't confidently source a citation for any of them.",
+                    "skipped": skipped,
+                }
         except Exception as e:
-            return jsonify({"error": str(e)}), 500
+            yield {"type": "error", "error": str(e)}
+
+    @app.route("/api/fetch-article")
+    def fetch_article():
+        """Fetch a new article and generate edit proposals (single JSON result)."""
+        terminal = None
+        for event in scan_events():
+            if event["type"] == "selected":
+                return jsonify(
+                    {
+                        "proposal_id": event["proposal_id"],
+                        "article_title": event["title"],
+                        "edit_count": event["edit_count"],
+                        "scanned": event["scanned"],
+                    }
+                )
+            terminal = event
+
+        if terminal and terminal["type"] == "error":
+            return jsonify({"error": terminal["error"]}), 500
+        return jsonify({"error": terminal["error"], "skipped": terminal.get("skipped", [])}), 404
+
+    @app.route("/api/fetch-article/stream")
+    def fetch_article_stream():
+        """Stream fetch progress as Server-Sent Events, so the UI can show the
+        agent working in real time ("look over the agent's shoulder")."""
+
+        def generate() -> Iterator[str]:
+            for event in scan_events():
+                yield f"data: {json.dumps(event)}\n\n"
+
+        return Response(
+            stream_with_context(generate()),
+            mimetype="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
 
     @app.route("/api/proposals")
     def get_proposals():

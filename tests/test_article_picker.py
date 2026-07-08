@@ -89,6 +89,7 @@ def test_is_candidate_rejects_empty_page(picker):
     """Test that empty pages are rejected."""
     page = Mock()
     page.redirect = False
+    page.namespace = 0
     page.text = Mock(return_value="")
     page.categories = Mock(return_value=[])
     page.protection = {}
@@ -96,6 +97,59 @@ def test_is_candidate_rejects_empty_page(picker):
     is_candidate, reason = picker.is_candidate(page)
     assert is_candidate is False
     assert "empty" in reason.lower()
+
+
+def test_is_candidate_rejects_non_article_namespace(picker):
+    """Category/Template/etc. pages (namespace != 0) are rejected."""
+    page = Mock()
+    page.redirect = False
+    page.namespace = 14  # Category namespace
+
+    is_candidate, reason = picker.is_candidate(page)
+    assert is_candidate is False
+    assert "namespace" in reason.lower()
+
+
+def test_is_candidate_rejects_article_without_citation_needed(picker):
+    """An article with no {{Citation needed}} tag is not a candidate."""
+    page = Mock()
+    page.redirect = False
+    page.namespace = 0
+    page.protection = {}
+    page.text = Mock(return_value="The sky is blue and well documented in many sources.")
+    page.categories = Mock(return_value=["Colors"])
+
+    is_candidate, reason = picker.is_candidate(page)
+    assert is_candidate is False
+    assert "citation-needed" in reason.lower()
+
+
+def test_is_candidate_accepts_article_with_citation_needed(picker):
+    """An article with a {{Citation needed}} tag is a candidate."""
+    page = Mock()
+    page.redirect = False
+    page.namespace = 0
+    page.protection = {}
+    page.text = Mock(return_value="The tower is the tallest structure in the region.{{Citation needed}}")
+    page.categories = Mock(return_value=["Buildings"])
+
+    is_candidate, reason = picker.is_candidate(page)
+    assert is_candidate is True
+    assert reason == ""
+
+
+def test_extract_citation_needed_claims_variants(picker):
+    """Extracts the preceding sentence for {{Citation needed}}, {{cn}}, {{fact}}."""
+    wikitext = "The dam was completed in 1931. It generated power for the whole valley.{{Citation needed}} Later it was expanded twice.{{cn}} A museum opened nearby in 1990.{{fact}}"
+    claims = picker.extract_citation_needed_claims(wikitext)
+    assert "It generated power for the whole valley." in claims
+    assert "Later it was expanded twice." in claims
+    assert "A museum opened nearby in 1990." in claims
+
+
+def test_extract_citation_needed_claims_none(picker):
+    """No tags -> no claims."""
+    assert picker.extract_citation_needed_claims("A fully sourced sentence.<ref>x</ref>") == []
 
 
 def test_is_protected_with_edit_protection(picker):

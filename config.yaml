@@ -22,7 +22,9 @@ wikipedia:
   user_agent: "WikiCiteBot/1.0 (https://github.com/yourorg/wiki-cite; citation-cleanup-assistant)"
 
 article_selection:
-  category: "Category:Articles_lacking_sources"
-  max_body_lines: 4
+  # Tracking category for inline {{Citation needed}} tags (the Citation Hunt signal):
+  # main-namespace articles with at least one specific claim flagged as unsourced.
+  category: "Category:All_articles_with_unsourced_statements"
+  max_body_lines: 4        # retained for reporting; selection now gates on {{Citation needed}} presence
   exclude_blp: true
   exclude_protected: true
