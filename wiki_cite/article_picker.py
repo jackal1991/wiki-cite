@@ -195,6 +195,11 @@ class ArticlePicker:
         if not page_text:
             return False, "empty page"
 
+        # Cost guard: don't spend a Claude call on a very long article.
+        max_chars = self.config.article_selection.max_wikitext_chars
+        if max_chars and len(page_text) > max_chars:
+            return False, f"too long to analyze ({len(page_text)} chars)"
+
         categories = self.get_categories(page)
 
         # Check if BLP

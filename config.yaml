@@ -1,7 +1,7 @@
 agent:
   model: "claude-sonnet-5"
   max_edits_per_article: 15
-  max_candidates_per_fetch: 20   # how many stub articles to scan per "Fetch New Article" before giving up
+  max_candidates_per_fetch: 8    # cost guard: max Claude analyses per "Fetch New Article" (one call per candidate scanned)
 
 guardrails:
   max_new_words: 50           # Excluding citations/templates
@@ -28,3 +28,4 @@ article_selection:
   max_body_lines: 4        # retained for reporting; selection now gates on {{Citation needed}} presence
   exclude_blp: true
   exclude_protected: true
+  max_wikitext_chars: 12000  # cost guard: skip articles longer than this so no single Claude prompt is huge

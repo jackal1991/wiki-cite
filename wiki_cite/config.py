@@ -14,7 +14,9 @@ class AgentConfig(BaseSettings):
 
     model: str = "claude-sonnet-5"
     max_edits_per_article: int = 15
-    max_candidates_per_fetch: int = 20
+    # Cost guard: each candidate scanned costs one Claude analysis call, so this
+    # caps the worst-case number of model calls per "Fetch new article" click.
+    max_candidates_per_fetch: int = 8
 
 
 class GuardrailsConfig(BaseSettings):
@@ -48,6 +50,9 @@ class ArticleSelectionConfig(BaseSettings):
     max_body_lines: int = 4
     exclude_blp: bool = True
     exclude_protected: bool = True
+    # Cost guard: skip articles whose wikitext exceeds this many characters, so a
+    # single analysis never sends a huge (expensive) prompt to Claude. 0 disables.
+    max_wikitext_chars: int = 12000
 
 
 class Config(BaseSettings):

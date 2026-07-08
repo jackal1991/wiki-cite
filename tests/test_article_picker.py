@@ -152,6 +152,21 @@ def test_extract_citation_needed_claims_none(picker):
     assert picker.extract_citation_needed_claims("A fully sourced sentence.<ref>x</ref>") == []
 
 
+def test_is_candidate_rejects_overlong_article(picker):
+    """Cost guard: articles longer than max_wikitext_chars are skipped before analysis."""
+    page = Mock()
+    page.redirect = False
+    page.namespace = 0
+    page.protection = {}
+    long_text = "word " * 5000 + "{{Citation needed}}"  # ~25k chars, over the 12k default
+    page.text = Mock(return_value=long_text)
+    page.categories = Mock(return_value=["History"])
+
+    is_candidate, reason = picker.is_candidate(page)
+    assert is_candidate is False
+    assert "too long" in reason.lower()
+
+
 def test_is_protected_with_edit_protection(picker):
     """Test detection of edit-protected pages."""
     page = Mock()
