@@ -1,8 +1,21 @@
 # Issue #8 — Dashboard: WCAG contrast compliance + separate Wikipedia/activity-feed panes
 
-**Status:** Ready
+**Status:** In Progress
 **Complexity:** Standard
 **GitHub:** https://github.com/jackal1991/wiki-cite/issues/8
+
+## Worktree
+- branch: feat/8-dashboard-contrast-panes
+- path: .worktrees/8-dashboard-contrast-panes
+- created: 2026-07-08
+
+## Conflict gate note
+Branch `worktree-agent-a4e0c41afb69a8b29` (#5) already modifies
+`wiki_cite/web_app.py` (SSE `scan_events`, outcome recording). This issue's
+core scope (`templates/*.html`, CSS) doesn't overlap, but if implementation
+ends up touching `web_app.py` for SSE/pane wiring, expect a merge conflict
+with #5 — re-check `web_app.py`'s current state before editing it, and note
+the overlap in the PR.
 
 ## Summary
 The Flask review dashboard has two UI problems to fix:
