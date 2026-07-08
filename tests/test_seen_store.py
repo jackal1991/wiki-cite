@@ -1,5 +1,7 @@
 """Tests for the processed-article store."""
 
+import sqlite3
+
 import pytest
 
 from wiki_cite.seen_store import SeenStore
@@ -82,3 +84,32 @@ def test_dimension_rates_rejects_unknown_dimension(tmp_path):
 def test_dimension_rates_empty_db_returns_empty(tmp_path):
     store = SeenStore(tmp_path / "seen.db")
     assert store.dimension_rates("source_type") == {}
+
+
+def test_opens_old_schema_db_adds_outcomes(tmp_path):
+    """A DB that predates this design (only seen_articles) gets the outcomes
+    table added on open, rather than failing (AC6.2)."""
+    path = tmp_path / "old.db"
+    conn = sqlite3.connect(str(path))
+    conn.execute("CREATE TABLE seen_articles (title TEXT PRIMARY KEY, revision_id TEXT, status TEXT, seen_at TEXT)")
+    conn.execute("INSERT INTO seen_articles (title, revision_id, status, seen_at) VALUES (?, ?, ?, ?)", ("Old Article", "1", "skipped", "2020-01-01"))
+    conn.commit()
+    conn.close()
+
+    store = SeenStore(path)  # must not raise
+    assert store.is_seen("Old Article") is True  # pre-existing row is intact
+
+    store.record_outcome("Old Article", "1", "skipped")  # outcomes table now exists
+    assert store.dimension_rates("source_type") == {}
+
+
+def test_dimension_rates_on_corrupt_db_returns_empty(tmp_path):
+    """A corrupt/non-sqlite file must not raise anywhere — reads degrade to
+    empty results (AC6.3)."""
+    path = tmp_path / "corrupt.db"
+    path.write_bytes(b"not a real sqlite database file")
+
+    store = SeenStore(path)  # schema init fails internally; must not raise
+    assert store.dimension_rates("source_type") == {}
+    assert store.is_seen("Anything") is False
+    assert store.record_outcome("Anything", "1", "skipped") is None

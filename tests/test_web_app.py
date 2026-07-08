@@ -234,3 +234,30 @@ def test_stats_route_empty_db_no_error(app):
 
     assert response.status_code == 200
     assert b"No data yet" in response.data
+
+
+def test_stats_route_corrupt_db_no_500(tmp_path, monkeypatch):
+    """AC6.3: a corrupt outcomes DB degrades /stats to 200 + 'no data', never a 500."""
+    monkeypatch.setattr("mwclient.Site", Mock())
+    db_path = tmp_path / "corrupt.db"
+    db_path.write_bytes(b"not a real sqlite database file")
+    set_config(Config(SEEN_DB_PATH=str(db_path)))
+
+    app = create_app()
+    client = app.test_client()
+
+    response = client.get("/stats")
+
+    assert response.status_code == 200
+    assert b"No data yet" in response.data
+
+
+def test_create_app_with_missing_db_dir_does_not_raise(tmp_path, monkeypatch):
+    """AC6.3: create_app() must not raise when seen_db_path's parent directory doesn't exist."""
+    monkeypatch.setattr("mwclient.Site", Mock())
+    missing_dir_db = tmp_path / "does" / "not" / "exist" / "seen.db"
+    set_config(Config(SEEN_DB_PATH=str(missing_dir_db)))
+
+    app = create_app()  # must not raise
+
+    assert app is not None

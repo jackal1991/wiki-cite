@@ -1,6 +1,7 @@
 """Tests for article picker."""
 
 import random
+import sqlite3
 
 import pytest
 from unittest.mock import Mock
@@ -438,6 +439,36 @@ def test_fetch_candidates_disabled_feedback_is_category_order(mock_site, tmp_pat
 
     titles = [c.title for c in picker.fetch_candidates(limit=2)]
     assert titles == ["Journal Article", "News Article"]
+
+
+def test_fetch_candidates_missing_db_matches_category_order(mock_site, tmp_path, restore_config):
+    """AC6.1: a fresh/empty outcomes DB (no history yet) still yields plain category order."""
+    config = Config()
+    config.feedback.epsilon = 0.0
+    set_config(config)
+
+    store = SeenStore(tmp_path / "fresh.db")
+    picker = ArticlePicker(site=mock_site, seen_store=store)
+    pages = [_make_candidate_page(f"Article {i}") for i in range(3)]
+    mock_site.pages = {"Category:All_articles_with_unsourced_statements": pages}
+
+    titles = [c.title for c in picker.fetch_candidates(limit=3)]
+    assert titles == ["Article 0", "Article 1", "Article 2"]
+
+
+def test_fetch_candidates_corrupt_db_falls_back(mock_site):
+    """AC6.3: dimension_rates raising sqlite3.Error -> _build_scorer returns None
+    -> category order, no raise out of fetch_candidates."""
+    seen = Mock()
+    seen.is_seen = Mock(return_value=False)
+    seen.dimension_rates = Mock(side_effect=sqlite3.OperationalError("disk I/O error"))
+    picker = ArticlePicker(site=mock_site, seen_store=seen)
+
+    pages = [_make_candidate_page(f"Article {i}") for i in range(3)]
+    mock_site.pages = {"Category:All_articles_with_unsourced_statements": pages}
+
+    titles = [c.title for c in picker.fetch_candidates(limit=3)]
+    assert titles == ["Article 0", "Article 1", "Article 2"]
 
 
 def test_is_protected_with_edit_protection(picker):

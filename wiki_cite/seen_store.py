@@ -74,31 +74,59 @@ class SeenStore:
     def __init__(self, path: str | Path = "wiki_cite_seen.db"):
         # check_same_thread=False + a lock: the Flask dev server serves the SSE
         # scan on a worker thread, so the connection is shared across threads.
-        self._conn = sqlite3.connect(str(path), check_same_thread=False)
-        self._conn.execute(_SCHEMA)
-        self._conn.execute(_OUTCOMES_SCHEMA)
-        self._conn.commit()
         self._lock = threading.Lock()
+        self._conn: sqlite3.Connection | None = None
+        try:
+            self._conn = sqlite3.connect(str(path), check_same_thread=False)
+            self._conn.execute(_SCHEMA)
+            self._conn.execute(_OUTCOMES_SCHEMA)
+            self._conn.commit()
+        except sqlite3.Error:
+            # connect() itself can fail (e.g. a missing parent directory), and a
+            # corrupt/unreadable file fails at the first query instead. Either way,
+            # self._conn is left None and every query method below checks for that
+            # (or guards its own sqlite3.Error), so a store left in this state
+            # degrades to empty reads / no-op writes instead of raising out of a
+            # scan or a review-UI click.
+            logger.warning("Failed to open/initialize store at %s; store will degrade to no-op reads/writes", path, exc_info=True)
+            self._conn = None
 
     def is_seen(self, title: str) -> bool:
         """Return True if this article title has already been processed."""
-        with self._lock:
-            row = self._conn.execute("SELECT 1 FROM seen_articles WHERE title = ?", (title,)).fetchone()
-        return row is not None
+        if self._conn is None:
+            return False
+        try:
+            with self._lock:
+                row = self._conn.execute("SELECT 1 FROM seen_articles WHERE title = ?", (title,)).fetchone()
+            return row is not None
+        except sqlite3.Error:
+            logger.warning("Failed to check is_seen for %r", title, exc_info=True)
+            return False
 
     def mark_seen(self, title: str, revision_id: str, status: str) -> None:
         """Record an article as processed (status: "selected", "skipped", "pushed")."""
-        with self._lock:
-            self._conn.execute(
-                "INSERT INTO seen_articles (title, revision_id, status, seen_at) VALUES (?, ?, ?, ?) ON CONFLICT(title) DO UPDATE SET revision_id=excluded.revision_id, status=excluded.status, seen_at=excluded.seen_at",
-                (title, revision_id, status, datetime.now().isoformat()),
-            )
-            self._conn.commit()
+        if self._conn is None:
+            return
+        try:
+            with self._lock:
+                self._conn.execute(
+                    "INSERT INTO seen_articles (title, revision_id, status, seen_at) VALUES (?, ?, ?, ?) ON CONFLICT(title) DO UPDATE SET revision_id=excluded.revision_id, status=excluded.status, seen_at=excluded.seen_at",
+                    (title, revision_id, status, datetime.now().isoformat()),
+                )
+                self._conn.commit()
+        except sqlite3.Error:
+            logger.warning("Failed to mark %r seen", title, exc_info=True)
 
     def count(self) -> int:
         """Number of processed articles on record."""
-        with self._lock:
-            return self._conn.execute("SELECT COUNT(*) FROM seen_articles").fetchone()[0]
+        if self._conn is None:
+            return 0
+        try:
+            with self._lock:
+                return self._conn.execute("SELECT COUNT(*) FROM seen_articles").fetchone()[0]
+        except sqlite3.Error:
+            logger.warning("Failed to count seen articles", exc_info=True)
+            return 0
 
     def record_outcome(
         self,
@@ -120,6 +148,9 @@ class SeenStore:
         """Append one outcomes row. Never raises past the caller — logs and
         swallows sqlite errors so a storage hiccup can't break a scan or a
         review-UI click."""
+        if self._conn is None:
+            return
+
         categories_json = json.dumps(categories) if categories is not None else None
         has_infobox_int = int(has_infobox) if has_infobox is not None else None
 
@@ -164,8 +195,15 @@ class SeenStore:
         if dimension not in _DIMENSION_COLUMNS:
             raise ValueError(f"Unknown dimension: {dimension!r}")
 
-        with self._lock:
-            rows = self._conn.execute(f"SELECT {dimension}, outcome FROM outcomes WHERE {dimension} IS NOT NULL").fetchall()  # noqa: S608 (dimension validated against _DIMENSION_COLUMNS above)
+        if self._conn is None:
+            return {}
+
+        try:
+            with self._lock:
+                rows = self._conn.execute(f"SELECT {dimension}, outcome FROM outcomes WHERE {dimension} IS NOT NULL").fetchall()  # noqa: S608 (dimension validated against _DIMENSION_COLUMNS above)
+        except sqlite3.Error:
+            logger.warning("Failed to read dimension_rates(%r)", dimension, exc_info=True)
+            return {}
 
         tallies: dict[str, list[int]] = {}
 
