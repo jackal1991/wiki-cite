@@ -306,6 +306,28 @@ def test_is_candidate_rejects_excluded_category_even_with_citation_needed(picker
         picker.config.article_selection.exclude_categories = []
 
 
+def _make_candidate_page(name, revision="1"):
+    page = Mock()
+    page.name = name
+    page.redirect = False
+    page.namespace = 0
+    page.protection = {}
+    page.revision = revision
+    page.text = Mock(return_value=f"{name} is notable for something.{{{{Citation needed}}}}")
+    page.categories = Mock(return_value=["Test"])
+    return page
+
+
+def test_fetch_candidates_pool_preserves_order(mock_site):
+    """With no scorer active, pooling is a no-op reorder: category order in, same order out."""
+    picker = ArticlePicker(site=mock_site)
+    pages = [_make_candidate_page(f"Article {i}") for i in range(4)]
+    mock_site.pages = {"Category:All_articles_with_unsourced_statements": pages}
+
+    titles = [c.title for c in picker.fetch_candidates(limit=3)]
+    assert titles == ["Article 0", "Article 1", "Article 2"]
+
+
 def test_is_protected_with_edit_protection(picker):
     """Test detection of edit-protected pages."""
     page = Mock()

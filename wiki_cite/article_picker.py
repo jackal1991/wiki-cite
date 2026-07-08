@@ -310,6 +310,29 @@ class ArticlePicker:
 
         return True, ""
 
+    def _build_candidate(self, page) -> CandidateArticle:
+        """Build a CandidateArticle from an mwclient page already known to be a candidate."""
+        page_text = page.text()
+        categories = self.get_categories(page)
+        body_lines = self.count_body_lines(page_text)
+
+        # Check for infobox
+        wikicode = mwparserfromhell.parse(page_text)
+        has_infobox = any("infobox" in str(t.name).lower() for t in wikicode.filter_templates())
+
+        return CandidateArticle(
+            title=page.name,
+            url=f"https://en.wikipedia.org/wiki/{page.name.replace(' ', '_')}",
+            wikitext=page_text,
+            body_line_count=body_lines,
+            revision_id=str(page.revision),
+            is_blp=self.is_blp(page_text, categories),
+            categories=categories,
+            has_infobox=has_infobox,
+            fetched_at=datetime.now(),
+            citation_needed_claims=self.extract_citation_needed_claims(page_text),
+        )
+
     def fetch_candidates(
         self,
         limit: int = 100,
@@ -317,6 +340,11 @@ class ArticlePicker:
         exclude_categories: list[str] | None = None,
     ) -> Iterator[CandidateArticle]:
         """Fetch candidate articles from Wikipedia.
+
+        Reads a look-ahead pool of candidates (size >= limit, cheap title/text
+        checks only — no Claude calls) so a future ranking pass can reorder the
+        pool by learned success rate before truncating to `limit`. With no active
+        scorer, pool order is identical to today's plain category order.
 
         Args:
             limit: Maximum number of candidates to fetch
@@ -337,9 +365,10 @@ class ArticlePicker:
             print(f"Error accessing category {category}: {e}")
             return
 
-        count = 0
+        pool_size = max(self.config.article_selection.candidate_pool_size, limit)
+        pool: list[CandidateArticle] = []
         for page in cat_page:
-            if count >= limit:
+            if len(pool) >= pool_size:
                 break
 
             # Skip already-processed articles first — a cheap title lookup, no
@@ -356,32 +385,11 @@ class ArticlePicker:
             if not is_candidate:
                 continue
 
-            # Get article data
             try:
-                page_text = page.text()
-                categories = self.get_categories(page)
-                body_lines = self.count_body_lines(page_text)
-
-                # Check for infobox
-                wikicode = mwparserfromhell.parse(page_text)
-                has_infobox = any("infobox" in str(t.name).lower() for t in wikicode.filter_templates())
-
-                candidate = CandidateArticle(
-                    title=page.name,
-                    url=f"https://en.wikipedia.org/wiki/{page.name.replace(' ', '_')}",
-                    wikitext=page_text,
-                    body_line_count=body_lines,
-                    revision_id=str(page.revision),
-                    is_blp=self.is_blp(page_text, categories),
-                    categories=categories,
-                    has_infobox=has_infobox,
-                    fetched_at=datetime.now(),
-                    citation_needed_claims=self.extract_citation_needed_claims(page_text),
-                )
-
-                yield candidate
-                count += 1
-
+                pool.append(self._build_candidate(page))
             except Exception as e:
                 print(f"Error processing page {page.name}: {e}")
                 continue
+
+        # Phase 4: no scorer yet -> identity order (Phase 5 sorts this pool).
+        yield from pool[:limit]

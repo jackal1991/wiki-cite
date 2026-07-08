@@ -62,6 +62,16 @@ class ArticleSelectionConfig(BaseSettings):
     max_wikitext_chars: int = 12000
     include_categories: list[str] = Field(default_factory=list)
     exclude_categories: list[str] = Field(default_factory=list)
+    # How many candidates to look ahead & rank before yielding `limit` (must be >= limit).
+    candidate_pool_size: int = 30
+
+
+class FeedbackConfig(BaseSettings):
+    """Configuration for the outcomes-feedback loop that re-ranks candidates."""
+
+    enabled: bool = True
+    epsilon: float = 0.15
+    min_samples: int = 5
 
 
 class Config(BaseSettings):
@@ -74,6 +84,7 @@ class Config(BaseSettings):
     sources: SourcesConfig = Field(default_factory=SourcesConfig)
     wikipedia: WikipediaConfig = Field(default_factory=WikipediaConfig)
     article_selection: ArticleSelectionConfig = Field(default_factory=ArticleSelectionConfig)
+    feedback: FeedbackConfig = Field(default_factory=FeedbackConfig)
 
     # API Keys from environment
     anthropic_api_key: str = Field(default="", alias="ANTHROPIC_API_KEY")
@@ -109,6 +120,8 @@ class Config(BaseSettings):
             config_data["wikipedia"] = WikipediaConfig(**yaml_config["wikipedia"])
         if "article_selection" in yaml_config:
             config_data["article_selection"] = ArticleSelectionConfig(**yaml_config["article_selection"])
+        if "feedback" in yaml_config:
+            config_data["feedback"] = FeedbackConfig(**yaml_config["feedback"])
 
         return cls(**config_data)
 

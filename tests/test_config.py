@@ -12,6 +12,7 @@ from wiki_cite.config import (
     GuardrailsConfig,
     WikipediaConfig,
     ArticleSelectionConfig,
+    FeedbackConfig,
 )
 
 
@@ -56,6 +57,17 @@ def test_article_selection_category_lists_default_empty():
     assert config.exclude_categories == []
 
 
+def test_candidate_pool_size_default():
+    assert ArticleSelectionConfig().candidate_pool_size == 30
+
+
+def test_feedback_config_defaults():
+    config = FeedbackConfig()
+    assert config.enabled is True
+    assert config.epsilon == 0.15
+    assert config.min_samples == 5
+
+
 def test_config_load_from_yaml():
     """Test loading configuration from YAML file."""
     yaml_content = """
@@ -83,6 +95,29 @@ guardrails:
             assert config.agent.search_results_per_query == 4
             assert config.guardrails.max_new_words == 100
             assert config.guardrails.min_similarity_ratio == 0.9
+        finally:
+            Path(f.name).unlink()
+
+
+def test_config_load_feedback_block():
+    """Test loading a `feedback:` block from YAML."""
+    yaml_content = """
+feedback:
+  enabled: false
+  epsilon: 0.3
+  min_samples: 10
+"""
+
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+        f.write(yaml_content)
+        f.flush()
+
+        try:
+            config = Config.load(f.name)
+
+            assert config.feedback.enabled is False
+            assert config.feedback.epsilon == 0.3
+            assert config.feedback.min_samples == 10
         finally:
             Path(f.name).unlink()
 
