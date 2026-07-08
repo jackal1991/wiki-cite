@@ -14,6 +14,7 @@ from wiki_cite.agent import ClaudeAgent
 from wiki_cite.article_picker import ArticlePicker, build_focused_excerpt
 from wiki_cite.config import get_config
 from wiki_cite.models import Article, EditProposal
+from wiki_cite.seen_store import SeenStore
 from wiki_cite.source_finder import SourceFinder, extract_citation_url
 from wiki_cite.wikipedia_push import WikipediaPushService
 
@@ -30,7 +31,8 @@ def create_app() -> Flask:
     proposals: dict[str, EditProposal] = {}
 
     # Initialize services
-    article_picker = ArticlePicker()
+    seen_store = SeenStore(config.seen_db_path)
+    article_picker = ArticlePicker(seen_store=seen_store)
     agent = ClaudeAgent()
     push_service = WikipediaPushService()
     source_finder = SourceFinder()
@@ -96,6 +98,7 @@ def create_app() -> Flask:
 
                 if proposal.has_confident_citation():
                     proposals[proposal.id] = proposal
+                    seen_store.mark_seen(candidate.title, candidate.revision_id, "selected")
                     yield {
                         "type": "selected",
                         "proposal_id": proposal.id,
@@ -106,6 +109,7 @@ def create_app() -> Flask:
                     return
 
                 skipped.append(candidate.title)
+                seen_store.mark_seen(candidate.title, candidate.revision_id, "skipped")
                 yield {"type": "skipped", "title": candidate.title, "reason": "no confidently-sourced citation", "edit_count": len(proposal.edits)}
 
             if not found_any:
@@ -299,6 +303,7 @@ def create_app() -> Flask:
         if success:
             proposal.status = "pushed"
             proposal.reviewed_at = datetime.now()
+            seen_store.mark_seen(proposal.article.title, proposal.article.revision_id, "pushed")
             return jsonify({"success": True, "message": message})
 
         return jsonify({"error": message}), 500

@@ -74,6 +74,8 @@ class Config(BaseSettings):
     crossref_email: str = Field(default="", alias="CROSSREF_EMAIL")
     brave_api_key: str = Field(default="", alias="BRAVE_API_KEY")
     flask_secret_key: str = Field(default="dev-secret-key", alias="FLASK_SECRET_KEY")
+    # SQLite file tracking already-processed articles (keeps fetch idempotent).
+    seen_db_path: str = Field(default="wiki_cite_seen.db", alias="SEEN_DB_PATH")
 
     @classmethod
     def load(cls, config_path: str | Path = "config.yaml") -> "Config":

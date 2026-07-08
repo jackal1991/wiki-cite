@@ -75,14 +75,17 @@ def build_focused_excerpt(wikitext: str, max_chars: int = 6000) -> str:
 class ArticlePicker:
     """Picks Wikipedia articles that need citation cleanup."""
 
-    def __init__(self, site: mwclient.Site | None = None):
+    def __init__(self, site: mwclient.Site | None = None, seen_store=None):
         """Initialize the article picker.
 
         Args:
             site: mwclient Site object. If None, creates a new connection to en.wikipedia.org
+            seen_store: optional SeenStore; already-processed titles are skipped so
+                fetching progresses through the category instead of restarting at the top.
         """
         self.config = get_config()
         self.site = site or mwclient.Site("en.wikipedia.org")
+        self.seen_store = seen_store
 
     def is_blp(self, page_text: str, categories: list[str]) -> bool:
         """Check if an article is a Biography of Living Person.
@@ -287,6 +290,11 @@ class ArticlePicker:
         for page in cat_page:
             if count >= limit:
                 break
+
+            # Skip already-processed articles first — a cheap title lookup, no
+            # page fetch — so fetching progresses instead of restarting at the top.
+            if self.seen_store is not None and self.seen_store.is_seen(page.name):
+                continue
 
             # Check if this is a candidate
             is_candidate, _ = self.is_candidate(page)

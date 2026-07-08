@@ -208,3 +208,7 @@ __marimo__/
 
 # Playwright MCP scratch output
 .playwright-mcp/
+
+# Idempotency store (processed articles)
+wiki_cite_seen.db
+*.db

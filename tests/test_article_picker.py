@@ -186,6 +186,30 @@ def test_build_focused_excerpt_skips_leading_infobox():
     assert "Test is the subject" in excerpt.replace("'''", "")
 
 
+def test_fetch_candidates_skips_seen(mock_site):
+    """Already-seen article titles are skipped before any page fetch."""
+    seen = Mock()
+    seen.is_seen = Mock(side_effect=lambda title: title == "Old News")
+    picker = ArticlePicker(site=mock_site, seen_store=seen)
+
+    seen_page = Mock()
+    seen_page.name = "Old News"
+    fresh_page = Mock()
+    fresh_page.name = "Fresh Article"
+    fresh_page.redirect = False
+    fresh_page.namespace = 0
+    fresh_page.protection = {}
+    fresh_page.revision = "42"
+    fresh_page.text = Mock(return_value="This is a fresh and notable claim about the subject.{{Citation needed}}")
+    fresh_page.categories = Mock(return_value=["News"])
+    mock_site.pages = {"Category:All_articles_with_unsourced_statements": [seen_page, fresh_page]}
+
+    titles = [c.title for c in picker.fetch_candidates(limit=5)]
+    assert "Old News" not in titles
+    assert "Fresh Article" in titles
+    seen_page.text.assert_not_called()  # seen skip happens before any page fetch
+
+
 def test_is_protected_with_edit_protection(picker):
     """Test detection of edit-protected pages."""
     page = Mock()
