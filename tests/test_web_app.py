@@ -212,3 +212,25 @@ def test_approve_then_reject_two_edits_survive_restart(app, tmp_path):
 
     rejected, total_grammar = fresh_store.dimension_rates("edit_type", success_outcomes=("rejected",))["grammar"]
     assert (rejected, total_grammar) == (1, 1)
+
+
+def test_stats_route_renders_rates(app):
+    proposal = make_proposal()
+    app.proposals[proposal.id] = proposal
+    client = app.test_client()
+    client.post(f"/api/proposals/{proposal.id}/approve-edit/0")
+
+    response = client.get("/stats")
+
+    assert response.status_code == 200
+    assert b"citation" in response.data
+    assert b"1/1" in response.data
+
+
+def test_stats_route_empty_db_no_error(app):
+    client = app.test_client()
+
+    response = client.get("/stats")
+
+    assert response.status_code == 200
+    assert b"No data yet" in response.data
