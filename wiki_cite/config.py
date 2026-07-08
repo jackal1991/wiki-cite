@@ -17,6 +17,13 @@ class AgentConfig(BaseSettings):
     # Cost guard: each candidate scanned costs one Claude analysis call, so this
     # caps the worst-case number of model calls per "Fetch new article" click.
     max_candidates_per_fetch: int = 8
+    # Cost guard: max tool-executing model calls per article in the agentic
+    # search loop. Once hit, the loop forces a final decision call with only
+    # the terminal `propose_edits` tool available.
+    max_search_turns: int = 5
+    # Cap on results returned per search tool call, to keep tool_result
+    # payloads (and therefore token spend) small.
+    search_results_per_query: int = 3
 
 
 class GuardrailsConfig(BaseSettings):

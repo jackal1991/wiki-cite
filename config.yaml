@@ -2,6 +2,8 @@ agent:
   model: "claude-sonnet-5"
   max_edits_per_article: 15
   max_candidates_per_fetch: 8    # cost guard: max Claude analyses per "Fetch New Article" (one call per candidate scanned)
+  max_search_turns: 5            # cost guard: max tool-executing model calls per article in the agentic search loop
+  search_results_per_query: 3    # cap results returned per search tool call, keeps tool_result payloads small
 
 guardrails:
   max_new_words: 50           # Excluding citations/templates
