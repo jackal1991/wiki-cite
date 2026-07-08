@@ -2,7 +2,9 @@
 Article Picker component for selecting Wikipedia articles to clean up.
 """
 
+import random
 import re
+import sqlite3
 from datetime import datetime
 from collections.abc import Iterator
 
@@ -70,6 +72,40 @@ def build_focused_excerpt(wikitext: str, max_chars: int = 6000) -> str:
         return wikitext.strip()[:max_chars]
 
     return "\n\n[…]\n\n".join(selected)[:max_chars]
+
+
+class CandidateScorer:
+    """Turns learned per-dimension outcome rates into a candidate score.
+
+    Pure function of (candidate, rates) — no I/O, so it's unit-testable without
+    sqlite or Wikipedia.
+    """
+
+    def __init__(self, rates: dict[str, dict[str, tuple[int, int]]], epsilon: float, min_samples: int):
+        self._rates = rates  # {dimension: {value: (successes, total)}}
+        self._epsilon = epsilon
+        self._min_samples = min_samples
+
+    def score(self, candidate: CandidateArticle) -> float:
+        """Blend the candidate's known article-level dimensions' success rates.
+
+        A dimension/value with fewer than min_samples observations scores at the
+        neutral 0.5 prior (unknown, not bad) so under-sampled candidates aren't
+        starved. Independent epsilon-random jitter is added so even well-observed,
+        low-rate dimensions occasionally surface ahead of a high-rate one.
+        """
+        scores = []
+        for category in candidate.categories:
+            successes, total = self._rates.get("categories", {}).get(category, (0, 0))
+            scores.append(successes / total if total >= self._min_samples else 0.5)
+
+        # "True"/"False" — matches dimension_rates' 1->"True"/0->"False" mapping.
+        has_infobox_key = str(candidate.has_infobox)
+        successes, total = self._rates.get("has_infobox", {}).get(has_infobox_key, (0, 0))
+        scores.append(successes / total if total >= self._min_samples else 0.5)
+
+        base = sum(scores) / len(scores) if scores else 0.5
+        return base + random.random() * self._epsilon
 
 
 class ArticlePicker:
@@ -333,6 +369,22 @@ class ArticlePicker:
             citation_needed_claims=self.extract_citation_needed_claims(page_text),
         )
 
+    def _build_scorer(self) -> CandidateScorer | None:
+        """Build a CandidateScorer from learned outcome rates, or None to degrade
+        to plain category order (no history, disabled, or a broken/missing DB)."""
+        if self.seen_store is None or not self.config.feedback.enabled:
+            return None
+
+        try:
+            rates = {
+                "categories": self.seen_store.dimension_rates("categories"),
+                "has_infobox": self.seen_store.dimension_rates("has_infobox"),
+            }
+        except sqlite3.Error:
+            return None
+
+        return CandidateScorer(rates, self.config.feedback.epsilon, self.config.feedback.min_samples)
+
     def fetch_candidates(
         self,
         limit: int = 100,
@@ -342,9 +394,10 @@ class ArticlePicker:
         """Fetch candidate articles from Wikipedia.
 
         Reads a look-ahead pool of candidates (size >= limit, cheap title/text
-        checks only — no Claude calls) so a future ranking pass can reorder the
-        pool by learned success rate before truncating to `limit`. With no active
-        scorer, pool order is identical to today's plain category order.
+        checks only — no Claude calls), then ranks the pool by learned success
+        rate (via CandidateScorer) before truncating to `limit`. Falls back to
+        plain category order when there's no seen_store, feedback is disabled,
+        or the outcomes DB is missing/broken.
 
         Args:
             limit: Maximum number of candidates to fetch
@@ -391,5 +444,6 @@ class ArticlePicker:
                 print(f"Error processing page {page.name}: {e}")
                 continue
 
-        # Phase 4: no scorer yet -> identity order (Phase 5 sorts this pool).
-        yield from pool[:limit]
+        scorer = self._build_scorer()
+        ranked = sorted(pool, key=scorer.score, reverse=True) if scorer else pool
+        yield from ranked[:limit]
