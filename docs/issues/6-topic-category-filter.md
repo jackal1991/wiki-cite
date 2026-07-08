@@ -9,6 +9,13 @@
 - path: .worktrees/6-topic-category-filter
 - created: 2026-07-08
 
+## Design
+Design plan: `docs/design-plans/2026-07-08-6-topic-category-filter.md`
+(currently on branch `feat/6-topic-category-filter`; not yet merged to `main`).
+Chosen scope: config.yaml defaults + a runtime, session-scoped dashboard
+override (not persisted back to config.yaml) with category search/select
+(via `site.allpages`, Category namespace) rather than free-text entry.
+
 ## Summary
 `ArticlePicker` (`wiki_cite/article_picker.py`) only pulls candidates from a single
 hardcoded Wikipedia category (`article_selection.category` in `config.yaml`, currently
