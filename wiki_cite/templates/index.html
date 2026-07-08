@@ -2,6 +2,54 @@
 
 {% block title %}Review Queue — WikiCite{% endblock %}
 
+{% block extra_styles %}
+<style>
+    .filter-label { display: block; font-size: 12.5px; font-weight: 600; color: #5c6653; margin: 14px 0 6px; }
+    .chip-row { display: flex; flex-wrap: wrap; gap: 8px; min-height: 30px; }
+    .chip {
+        display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 500;
+        color: #14432f; background: #e7f3ea; border: 1px solid #cfe6d6; border-radius: 999px;
+        padding: 5px 8px 5px 12px; cursor: default;
+    }
+    .chip-remove {
+        display: inline-flex; align-items: center; justify-content: center;
+        width: 18px; height: 18px; border-radius: 50%; border: none; cursor: pointer;
+        background: rgba(20,67,47,.1); color: #14432f; font-size: 12px; line-height: 1;
+        font-family: inherit;
+    }
+    .chip-remove:hover { background: #187a49; color: #fff; }
+    .chip.exclude { color: #8a3b28; background: #f6e6e0; border-color: #e6d3cc; }
+    .chip.exclude .chip-remove { background: rgba(138,59,40,.12); color: #8a3b28; }
+    .chip.exclude .chip-remove:hover { background: #8a3b28; color: #fff; }
+    .cat-search { position: relative; margin-top: 4px; max-width: 420px; }
+    .cat-search input {
+        width: 100%; font-size: 14px; font-family: inherit; color: #22271f;
+        border: 1px solid #e0ddd0; border-radius: 8px; padding: 10px 14px; background: #fbfaf6;
+    }
+    .cat-search input:focus { outline: none; border-color: #1f8f57; }
+    .cat-search-results {
+        position: absolute; top: calc(100% + 4px); left: 0; right: 0; z-index: 5;
+        background: #fff; border: 1px solid #e4e2d6; border-radius: 10px;
+        box-shadow: 0 6px 18px rgba(30,40,25,.1); max-height: 260px; overflow-y: auto;
+    }
+    .cat-search-result {
+        display: flex; align-items: center; justify-content: space-between; gap: 10px;
+        padding: 9px 14px; font-size: 13.5px; border-bottom: 1px solid #f1efe6;
+    }
+    .cat-search-result:last-child { border-bottom: none; }
+    .cat-search-result-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .cat-search-result-actions { display: flex; gap: 6px; flex-shrink: 0; }
+    .btn-add-include, .btn-add-exclude {
+        font-size: 11.5px; font-weight: 600; cursor: pointer; padding: 5px 10px; border-radius: 6px;
+        font-family: inherit;
+    }
+    .btn-add-include { color: #14432f; background: #eef4ea; border: 1px solid #d5e6d9; }
+    .btn-add-include:hover { background: #dcefe0; }
+    .btn-add-exclude { color: #8a3b28; background: #fff; border: 1px solid #e6d3cc; }
+    .btn-add-exclude:hover { background: #f6e6e0; }
+</style>
+{% endblock %}
+
 {% block content %}
 <main id="queue-view">
     <div class="panel">
@@ -12,6 +60,27 @@
             <button class="btn-primary" id="fetch-btn" onclick="fetchNewArticle()">Fetch new article</button>
             <span style="font-size:13px; color:#7a8271;">Scans stubs lacking sources · skips living persons &amp; protected pages</span>
         </div>
+    </div>
+
+    <div class="panel" id="category-filter" style="margin-top:18px;">
+        <div class="eyebrow">Category filter</div>
+        <p class="muted" style="font-size:13px; margin:4px 0 12px;">
+            Scope which categories the agent draws candidates from. Applies to the next fetch;
+            resets to config defaults on server restart.
+        </p>
+
+        <label class="filter-label">Include (article must be in one of these)</label>
+        <div class="chip-row" id="include-chips"></div>
+
+        <label class="filter-label">Exclude (article must not be in any of these)</label>
+        <div class="chip-row" id="exclude-chips"></div>
+
+        <div class="cat-search">
+            <input type="text" id="cat-search-input" autocomplete="off" spellcheck="false"
+                   placeholder="Search Wikipedia categories…">
+            <div class="cat-search-results" id="cat-search-results" style="display:none;"></div>
+        </div>
+        <div id="filter-status" class="muted" style="font-size:12px; margin-top:8px;"></div>
     </div>
 
     <div id="error" class="banner error" style="display:none; margin-top:20px;"></div>
@@ -284,6 +353,147 @@
         };
     }
 
+    // ---------- Category filter ----------
+    let categoryFilter = { include: [], exclude: [] };
+
+    async function loadCategoryFilter() {
+        const res = await fetch('/api/settings/categories');
+        categoryFilter = await res.json();
+        renderChips();
+    }
+
+    function renderChipRow(elementId, names, kind) {
+        const el = document.getElementById(elementId);
+        el.innerHTML = '';
+        if (!names.length) {
+            const empty = document.createElement('span');
+            empty.className = 'muted';
+            empty.style.fontSize = '12.5px';
+            empty.textContent = 'None';
+            el.appendChild(empty);
+            return;
+        }
+        names.forEach(name => {
+            const chip = document.createElement('span');
+            chip.className = kind === 'exclude' ? 'chip exclude' : 'chip';
+            chip.appendChild(document.createTextNode(name + ' '));
+
+            const remove = document.createElement('button');
+            remove.type = 'button';
+            remove.className = 'chip-remove';
+            remove.setAttribute('aria-label', `Remove ${name} from ${kind}`);
+            remove.textContent = '×';
+            remove.addEventListener('click', () => removeCategory(kind, name));
+            chip.appendChild(remove);
+
+            el.appendChild(chip);
+        });
+    }
+
+    function renderChips() {
+        renderChipRow('include-chips', categoryFilter.include, 'include');
+        renderChipRow('exclude-chips', categoryFilter.exclude, 'exclude');
+    }
+
+    function setFilterStatus(message, isError) {
+        const el = document.getElementById('filter-status');
+        el.textContent = message;
+        el.style.color = isError ? '#8a3b28' : '';
+    }
+
+    async function saveCategoryFilter() {
+        const res = await fetch('/api/settings/categories', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(categoryFilter),
+        });
+        const data = await res.json();
+        if (!res.ok) { setFilterStatus(data.error || 'Save failed', true); return; }
+        categoryFilter = data;
+        renderChips();
+        setFilterStatus('Saved — applies to your next fetch');
+    }
+
+    function addCategory(kind, name) {
+        if (!categoryFilter[kind].includes(name)) categoryFilter[kind].push(name);
+        saveCategoryFilter();
+        hideResults();
+        document.getElementById('cat-search-input').value = '';
+    }
+
+    function removeCategory(kind, name) {
+        categoryFilter[kind] = categoryFilter[kind].filter(c => c !== name);
+        saveCategoryFilter();
+    }
+
+    function hideResults() {
+        const el = document.getElementById('cat-search-results');
+        el.style.display = 'none';
+        el.innerHTML = '';
+    }
+
+    function renderResults(categories) {
+        const el = document.getElementById('cat-search-results');
+        el.innerHTML = '';
+        if (!categories.length) {
+            const empty = document.createElement('div');
+            empty.className = 'cat-search-result muted';
+            empty.textContent = 'No matching categories';
+            el.appendChild(empty);
+            el.style.display = 'block';
+            return;
+        }
+        categories.forEach(name => {
+            const row = document.createElement('div');
+            row.className = 'cat-search-result';
+
+            const nameSpan = document.createElement('span');
+            nameSpan.className = 'cat-search-result-name';
+            nameSpan.textContent = name;
+
+            const actions = document.createElement('span');
+            actions.className = 'cat-search-result-actions';
+
+            const includeBtn = document.createElement('button');
+            includeBtn.type = 'button';
+            includeBtn.className = 'btn-add-include';
+            includeBtn.textContent = '+ include';
+            includeBtn.addEventListener('click', () => addCategory('include', name));
+
+            const excludeBtn = document.createElement('button');
+            excludeBtn.type = 'button';
+            excludeBtn.className = 'btn-add-exclude';
+            excludeBtn.textContent = '+ exclude';
+            excludeBtn.addEventListener('click', () => addCategory('exclude', name));
+
+            actions.appendChild(includeBtn);
+            actions.appendChild(excludeBtn);
+            row.appendChild(nameSpan);
+            row.appendChild(actions);
+            el.appendChild(row);
+        });
+        el.style.display = 'block';
+    }
+
+    let searchTimer = null;
+    function onCatSearchInput(e) {
+        const q = e.target.value.trim();
+        clearTimeout(searchTimer);
+        if (!q) { hideResults(); return; }
+        searchTimer = setTimeout(() => runCatSearch(q), 200);
+    }
+
+    async function runCatSearch(q) {
+        try {
+            const res = await fetch('/api/categories/search?q=' + encodeURIComponent(q));
+            if (!res.ok) { hideResults(); return; }
+            const { categories } = await res.json();
+            renderResults(categories);
+        } catch (err) {
+            hideResults();
+        }
+    }
+
     // ---------- Queue rendering ----------
     function proposalCard(p) {
         const isPushed = p.status === 'pushed';
@@ -324,7 +534,10 @@
         }
     }
 
+    document.getElementById('cat-search-input').addEventListener('input', onCatSearchInput);
+
     loadProposals();
+    loadCategoryFilter();
 </script>
 {% endraw %}
 {% endblock %}
