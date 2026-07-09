@@ -210,6 +210,102 @@ def test_fetch_candidates_skips_seen(mock_site):
     seen_page.text.assert_not_called()  # seen skip happens before any page fetch
 
 
+def test_fetch_candidates_passes_category_overrides(mock_site):
+    """A mock page in an excluded category is filtered out when fetch_candidates
+    is called with an exclude_categories override."""
+    picker = ArticlePicker(site=mock_site)
+
+    sports_category = Mock()
+    sports_category.name = "Category:Sports"
+    excluded_page = Mock()
+    excluded_page.name = "Excluded Article"
+    excluded_page.redirect = False
+    excluded_page.namespace = 0
+    excluded_page.protection = {}
+    excluded_page.revision = "1"
+    excluded_page.text = Mock(return_value="A claim about the subject.{{Citation needed}}")
+    excluded_page.categories = Mock(return_value=[sports_category])
+
+    history_category = Mock()
+    history_category.name = "Category:History"
+    included_page = Mock()
+    included_page.name = "Included Article"
+    included_page.redirect = False
+    included_page.namespace = 0
+    included_page.protection = {}
+    included_page.revision = "2"
+    included_page.text = Mock(return_value="A fresh and notable claim about the subject.{{Citation needed}}")
+    included_page.categories = Mock(return_value=[history_category])
+
+    mock_site.pages = {"Category:All_articles_with_unsourced_statements": [excluded_page, included_page]}
+
+    titles = [c.title for c in picker.fetch_candidates(limit=5, exclude_categories=["Sports"])]
+    assert "Excluded Article" not in titles
+    assert "Included Article" in titles
+
+
+def test_category_filter_include_only_overlap_passes():
+    """Include-only, article overlaps -> passes."""
+    ok, reason = ArticlePicker.category_filter(["History"], ["History"], [])
+    assert ok is True
+    assert reason == ""
+
+
+def test_category_filter_include_only_no_overlap_rejects():
+    """Include-only, article does not overlap -> rejected."""
+    ok, reason = ArticlePicker.category_filter(["Sports"], ["History"], [])
+    assert ok is False
+    assert reason == "not in included categories"
+
+
+def test_category_filter_exclude_only_overlap_rejects():
+    """Exclude-only, article overlaps -> rejected."""
+    ok, reason = ArticlePicker.category_filter(["Sports"], [], ["Sports"])
+    assert ok is False
+    assert "excluded category" in reason
+
+
+def test_category_filter_exclude_takes_precedence_over_include():
+    """Article hits both exclude and include -> rejected as excluded."""
+    ok, reason = ArticlePicker.category_filter(["Sports"], ["Sports"], ["Sports"])
+    assert ok is False
+    assert "excluded category" in reason
+
+
+def test_category_filter_both_empty_is_noop():
+    """Both lists empty -> passes (matches today's behavior)."""
+    ok, reason = ArticlePicker.category_filter(["Anything"], [], [])
+    assert ok is True
+    assert reason == ""
+
+
+def test_category_filter_normalizes_case_underscore_and_prefix():
+    """Matching is case/underscore/``Category:`` prefix insensitive."""
+    ok, reason = ArticlePicker.category_filter(["Living people"], ["living_people"], [])
+    assert ok is True
+    assert reason == ""
+
+
+def test_is_candidate_rejects_excluded_category_even_with_citation_needed(picker):
+    """An excluded-category article is rejected even with a {{Citation needed}} tag."""
+    picker.config.article_selection.exclude_categories = ["Sports"]
+    page = Mock()
+    page.redirect = False
+    page.namespace = 0
+    page.protection = {}
+    page.text = Mock(return_value="The tower is the tallest structure in the region.{{Citation needed}}")
+    category = Mock()
+    category.name = "Category:Sports"
+    page.categories = Mock(return_value=[category])
+
+    try:
+        is_candidate, reason = picker.is_candidate(page)
+        assert is_candidate is False
+        assert "excluded category" in reason
+    finally:
+        picker.config.article_selection.exclude_categories = []
+
+
 def test_is_protected_with_edit_protection(picker):
     """Test detection of edit-protected pages."""
     page = Mock()

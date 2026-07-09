@@ -220,11 +220,48 @@ class ArticlePicker:
         except Exception:
             return []
 
-    def is_candidate(self, page) -> tuple[bool, str]:
+    @staticmethod
+    def _normalize_category(name: str) -> str:
+        """Normalize a category name for comparison: drop the ``Category:`` prefix,
+        convert underscores to spaces, and casefold."""
+        return name.split(":", 1)[-1].replace("_", " ").strip().casefold()
+
+    @staticmethod
+    def category_filter(
+        categories: list[str],
+        include: list[str],
+        exclude: list[str],
+    ) -> tuple[bool, str]:
+        """Decide whether an article's categories pass the include/exclude filter.
+
+        Exclude takes precedence: any overlap with ``exclude`` rejects regardless of
+        ``include``. A non-empty ``include`` then requires overlap to pass. Empty
+        lists are no-ops (matches today's behavior).
+        """
+        article = {ArticlePicker._normalize_category(c) for c in categories}
+        excluded = {ArticlePicker._normalize_category(c) for c in exclude}
+        hit = article & excluded
+        if hit:
+            return False, f"excluded category: {sorted(hit)[0]}"
+        if include:
+            included = {ArticlePicker._normalize_category(c) for c in include}
+            if not (article & included):
+                return False, "not in included categories"
+        return True, ""
+
+    def is_candidate(
+        self,
+        page,
+        include_categories: list[str] | None = None,
+        exclude_categories: list[str] | None = None,
+    ) -> tuple[bool, str]:
         """Check if a page is a candidate for cleanup.
 
         Args:
             page: mwclient Page object
+            include_categories: optional override for the configured include list
+                (``None`` means "use config"; pass ``[]`` to explicitly disable).
+            exclude_categories: optional override for the configured exclude list.
 
         Returns:
             Tuple of (is_candidate, reason_if_not)
@@ -257,6 +294,12 @@ class ArticlePicker:
 
         categories = self.get_categories(page)
 
+        include = include_categories if include_categories is not None else self.config.article_selection.include_categories
+        exclude = exclude_categories if exclude_categories is not None else self.config.article_selection.exclude_categories
+        ok, reason = self.category_filter(categories, include, exclude)
+        if not ok:
+            return False, reason
+
         # Check if BLP
         if self.config.article_selection.exclude_blp and self.is_blp(page_text, categories):
             return False, "BLP article"
@@ -267,11 +310,19 @@ class ArticlePicker:
 
         return True, ""
 
-    def fetch_candidates(self, limit: int = 100) -> Iterator[CandidateArticle]:
+    def fetch_candidates(
+        self,
+        limit: int = 100,
+        include_categories: list[str] | None = None,
+        exclude_categories: list[str] | None = None,
+    ) -> Iterator[CandidateArticle]:
         """Fetch candidate articles from Wikipedia.
 
         Args:
             limit: Maximum number of candidates to fetch
+            include_categories: optional override for the configured include list
+                (``None`` means "use config"; pass ``[]`` to explicitly disable).
+            exclude_categories: optional override for the configured exclude list.
 
         Yields:
             CandidateArticle objects
@@ -297,7 +348,11 @@ class ArticlePicker:
                 continue
 
             # Check if this is a candidate
-            is_candidate, _ = self.is_candidate(page)
+            is_candidate, _ = self.is_candidate(
+                page,
+                include_categories=include_categories,
+                exclude_categories=exclude_categories,
+            )
             if not is_candidate:
                 continue
 

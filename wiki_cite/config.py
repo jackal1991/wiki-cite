@@ -60,6 +60,8 @@ class ArticleSelectionConfig(BaseSettings):
     # Cost guard: skip articles whose wikitext exceeds this many characters, so a
     # single analysis never sends a huge (expensive) prompt to Claude. 0 disables.
     max_wikitext_chars: int = 12000
+    include_categories: list[str] = Field(default_factory=list)
+    exclude_categories: list[str] = Field(default_factory=list)
 
 
 class Config(BaseSettings):
