@@ -9,6 +9,8 @@ from wiki_cite.agent import ClaudeAgent
 from wiki_cite.article_picker import ArticlePicker
 from wiki_cite.config import get_config
 from wiki_cite.models import Article
+from wiki_cite.seen_store import SeenStore
+from wiki_cite.stats import STATS_DIMENSIONS
 from wiki_cite.web_app import create_app
 
 
@@ -108,6 +110,23 @@ def cmd_config(args):
     print(f"  Exclude protected: {config.article_selection.exclude_protected}")
 
 
+def cmd_stats(args):
+    """Show approval/success rates by dimension, from the recorded outcomes."""
+    store = SeenStore(get_config().seen_db_path)
+
+    for dimension in STATS_DIMENSIONS:
+        print(f"\n{dimension}:")
+        rates = store.dimension_rates(dimension)
+        shown = False
+        for value, (successes, total) in sorted(rates.items()):
+            if total == 0:
+                continue  # never show a rate with n=0
+            print(f"  {value:<30} {successes}/{total} ({successes / total:.0%})")
+            shown = True
+        if not shown:
+            print("  (no data)")
+
+
 def main():
     """Main CLI entry point."""
     parser = argparse.ArgumentParser(
@@ -143,6 +162,10 @@ def main():
     # Config command
     config_parser = subparsers.add_parser("config", help="Show current configuration")
     config_parser.set_defaults(func=cmd_config)
+
+    # Stats command
+    stats_parser = subparsers.add_parser("stats", help="Show approval/success rates by dimension")
+    stats_parser.set_defaults(func=cmd_stats)
 
     # Parse arguments
     args = parser.parse_args()

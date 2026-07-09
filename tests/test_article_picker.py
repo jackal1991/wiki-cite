@@ -1,9 +1,15 @@
 """Tests for article picker."""
 
+import random
+import sqlite3
+
 import pytest
 from unittest.mock import Mock
 
-from wiki_cite.article_picker import ArticlePicker, build_focused_excerpt
+from wiki_cite.article_picker import ArticlePicker, CandidateScorer, build_focused_excerpt
+from wiki_cite.config import Config, get_config, set_config
+from wiki_cite.models import CandidateArticle
+from wiki_cite.seen_store import SeenStore
 
 
 @pytest.fixture
@@ -190,6 +196,7 @@ def test_fetch_candidates_skips_seen(mock_site):
     """Already-seen article titles are skipped before any page fetch."""
     seen = Mock()
     seen.is_seen = Mock(side_effect=lambda title: title == "Old News")
+    seen.dimension_rates = Mock(return_value={})
     picker = ArticlePicker(site=mock_site, seen_store=seen)
 
     seen_page = Mock()
@@ -304,6 +311,164 @@ def test_is_candidate_rejects_excluded_category_even_with_citation_needed(picker
         assert "excluded category" in reason
     finally:
         picker.config.article_selection.exclude_categories = []
+
+
+def _make_candidate_page(name, revision="1"):
+    page = Mock()
+    page.name = name
+    page.redirect = False
+    page.namespace = 0
+    page.protection = {}
+    page.revision = revision
+    page.text = Mock(return_value=f"{name} is notable for something.{{{{Citation needed}}}}")
+    page.categories = Mock(return_value=["Test"])
+    return page
+
+
+def test_fetch_candidates_pool_preserves_order(mock_site):
+    """With no scorer active, pooling is a no-op reorder: category order in, same order out."""
+    picker = ArticlePicker(site=mock_site)
+    pages = [_make_candidate_page(f"Article {i}") for i in range(4)]
+    mock_site.pages = {"Category:All_articles_with_unsourced_statements": pages}
+
+    titles = [c.title for c in picker.fetch_candidates(limit=3)]
+    assert titles == ["Article 0", "Article 1", "Article 2"]
+
+
+@pytest.fixture
+def restore_config():
+    """Config is global (get_config/set_config); restore it after tests that override it."""
+    original = get_config()
+    yield
+    set_config(original)
+
+
+def _mock_category(name):
+    """get_categories() expects mwclient category objects (a `.name` attribute),
+    not plain strings — mirror that shape for pages used in scorer tests."""
+    cat = Mock()
+    cat.name = name
+    return cat
+
+
+def _candidate(categories, has_infobox=False):
+    return CandidateArticle(title="T", url="u", wikitext="w", body_line_count=1, revision_id="1", categories=categories, has_infobox=has_infobox)
+
+
+def test_scorer_prefers_higher_rate_dimension():
+    """AC4.1: a candidate correlated with a higher-rate dimension value scores higher."""
+    rates = {"categories": {"news-ish": (9, 10), "journal-ish": (1, 10)}}
+    scorer = CandidateScorer(rates, epsilon=0, min_samples=5)
+
+    news = _candidate(["news-ish"])
+    journal = _candidate(["journal-ish"])
+
+    assert scorer.score(news) > scorer.score(journal)
+
+
+def test_scorer_neutral_prior_for_undersampled():
+    """AC5.2: an under-sampled (or never-seen) value scores at the neutral 0.5 prior, not 0."""
+    scorer = CandidateScorer(rates={}, epsilon=0, min_samples=5)
+    unknown = _candidate(["never-seen-category"])
+
+    assert scorer.score(unknown) == 0.5
+
+
+def test_scorer_epsilon_can_reorder():
+    """AC5.1: epsilon jitter means no strict, sticky ordering — a low-rate candidate can
+    sort ahead of a high-rate one across seeded runs."""
+    rates = {"categories": {"high": (9, 10), "low": (1, 10)}}
+    high = _candidate(["high"])
+    low = _candidate(["low"])
+
+    flipped = False
+    for seed in range(50):
+        random.seed(seed)
+        scorer = CandidateScorer(rates, epsilon=1.0, min_samples=5)
+        if scorer.score(low) > scorer.score(high):
+            flipped = True
+            break
+    assert flipped
+
+
+def test_fetch_candidates_ranks_by_learned_rate(mock_site, tmp_path, restore_config):
+    """AC4.1 end-to-end: a clear rate gap between two categories re-ranks the pool,
+    with zero Claude/agent calls (the picker has no agent reference at all)."""
+    store = SeenStore(tmp_path / "seen.db")
+    for _ in range(9):
+        store.record_outcome("x", "1", "approved", categories=["news-ish"])
+    store.record_outcome("y", "1", "rejected", categories=["news-ish"])
+    for _ in range(9):
+        store.record_outcome("z", "1", "rejected", categories=["journal-ish"])
+    store.record_outcome("w", "1", "approved", categories=["journal-ish"])
+
+    config = Config()
+    config.feedback.enabled = True
+    config.feedback.epsilon = 0.0
+    set_config(config)
+
+    picker = ArticlePicker(site=mock_site, seen_store=store)
+    news_page = _make_candidate_page("News Article")
+    news_page.categories = Mock(return_value=[_mock_category("news-ish")])
+    journal_page = _make_candidate_page("Journal Article")
+    journal_page.categories = Mock(return_value=[_mock_category("journal-ish")])
+    mock_site.pages = {"Category:All_articles_with_unsourced_statements": [journal_page, news_page]}
+
+    titles = [c.title for c in picker.fetch_candidates(limit=1)]
+    assert titles == ["News Article"]
+
+
+def test_fetch_candidates_disabled_feedback_is_category_order(mock_site, tmp_path, restore_config):
+    """feedback.enabled=False -> category order, even with a seeded DB showing a rate gap."""
+    store = SeenStore(tmp_path / "seen.db")
+    for _ in range(9):
+        store.record_outcome("x", "1", "approved", categories=["news-ish"])
+    for _ in range(9):
+        store.record_outcome("z", "1", "rejected", categories=["journal-ish"])
+
+    config = Config()
+    config.feedback.enabled = False
+    set_config(config)
+
+    picker = ArticlePicker(site=mock_site, seen_store=store)
+    journal_page = _make_candidate_page("Journal Article")
+    journal_page.categories = Mock(return_value=[_mock_category("journal-ish")])
+    news_page = _make_candidate_page("News Article")
+    news_page.categories = Mock(return_value=[_mock_category("news-ish")])
+    mock_site.pages = {"Category:All_articles_with_unsourced_statements": [journal_page, news_page]}
+
+    titles = [c.title for c in picker.fetch_candidates(limit=2)]
+    assert titles == ["Journal Article", "News Article"]
+
+
+def test_fetch_candidates_missing_db_matches_category_order(mock_site, tmp_path, restore_config):
+    """AC6.1: a fresh/empty outcomes DB (no history yet) still yields plain category order."""
+    config = Config()
+    config.feedback.epsilon = 0.0
+    set_config(config)
+
+    store = SeenStore(tmp_path / "fresh.db")
+    picker = ArticlePicker(site=mock_site, seen_store=store)
+    pages = [_make_candidate_page(f"Article {i}") for i in range(3)]
+    mock_site.pages = {"Category:All_articles_with_unsourced_statements": pages}
+
+    titles = [c.title for c in picker.fetch_candidates(limit=3)]
+    assert titles == ["Article 0", "Article 1", "Article 2"]
+
+
+def test_fetch_candidates_corrupt_db_falls_back(mock_site):
+    """AC6.3: dimension_rates raising sqlite3.Error -> _build_scorer returns None
+    -> category order, no raise out of fetch_candidates."""
+    seen = Mock()
+    seen.is_seen = Mock(return_value=False)
+    seen.dimension_rates = Mock(side_effect=sqlite3.OperationalError("disk I/O error"))
+    picker = ArticlePicker(site=mock_site, seen_store=seen)
+
+    pages = [_make_candidate_page(f"Article {i}") for i in range(3)]
+    mock_site.pages = {"Category:All_articles_with_unsourced_statements": pages}
+
+    titles = [c.title for c in picker.fetch_candidates(limit=3)]
+    assert titles == ["Article 0", "Article 1", "Article 2"]
 
 
 def test_is_protected_with_edit_protection(picker):

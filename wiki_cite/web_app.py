@@ -4,6 +4,7 @@ Flask web application for reviewing and approving article edits.
 
 import json
 import os
+import sqlite3
 from collections.abc import Iterator
 from datetime import datetime
 
@@ -16,6 +17,7 @@ from wiki_cite.config import get_config
 from wiki_cite.models import Article, EditProposal
 from wiki_cite.seen_store import SeenStore
 from wiki_cite.source_finder import SourceFinder, extract_citation_url
+from wiki_cite.stats import STATS_DIMENSIONS
 from wiki_cite.wikipedia_push import WikipediaPushService
 
 
@@ -29,6 +31,7 @@ def create_app() -> Flask:
 
     # In-memory storage for proposals (in production, use a database)
     proposals: dict[str, EditProposal] = {}
+    app.proposals = proposals  # test-only seam for seeding proposals directly
 
     # In-memory include/exclude category override, seeded from config.yaml. Mutating
     # this never touches config.yaml, so it resets to the config defaults on restart.
@@ -110,6 +113,21 @@ def create_app() -> Flask:
                 if proposal.has_confident_citation():
                     proposals[proposal.id] = proposal
                     seen_store.mark_seen(candidate.title, candidate.revision_id, "selected")
+                    for edit in proposal.edits:
+                        seen_store.record_outcome(
+                            candidate.title,
+                            candidate.revision_id,
+                            "proposed",
+                            categories=candidate.categories,
+                            body_line_count=candidate.body_line_count,
+                            has_infobox=candidate.has_infobox,
+                            citation_needed_count=len(candidate.citation_needed_claims),
+                            edit_type=edit.edit_type.value,
+                            confidence=edit.confidence,
+                            source_type=edit.source.source_type.value if edit.source else None,
+                            reliability=edit.source.reliability.value if edit.source and edit.source.reliability else None,
+                            policy_reference=edit.policy_reference,
+                        )
                     yield {
                         "type": "selected",
                         "proposal_id": proposal.id,
@@ -121,6 +139,15 @@ def create_app() -> Flask:
 
                 skipped.append(candidate.title)
                 seen_store.mark_seen(candidate.title, candidate.revision_id, "skipped")
+                seen_store.record_outcome(
+                    candidate.title,
+                    candidate.revision_id,
+                    "skipped",
+                    categories=candidate.categories,
+                    body_line_count=candidate.body_line_count,
+                    has_infobox=candidate.has_infobox,
+                    citation_needed_count=len(candidate.citation_needed_claims),
+                )
                 yield {"type": "skipped", "title": candidate.title, "reason": "no confidently-sourced citation", "edit_count": len(proposal.edits)}
 
             if not found_any:
@@ -293,6 +320,18 @@ def create_app() -> Flask:
 
         proposal.edits[edit_index].approved = True
 
+        edit = proposal.edits[edit_index]
+        seen_store.record_outcome(
+            proposal.article.title,
+            proposal.article.revision_id,
+            "approved",
+            edit_type=edit.edit_type.value,
+            confidence=edit.confidence,
+            source_type=edit.source.source_type.value if edit.source else None,
+            reliability=edit.source.reliability.value if edit.source and edit.source.reliability else None,
+            policy_reference=edit.policy_reference,
+        )
+
         return jsonify({"success": True})
 
     @app.route("/api/proposals/<proposal_id>/reject-edit/<int:edit_index>", methods=["POST"])
@@ -307,6 +346,18 @@ def create_app() -> Flask:
             return jsonify({"error": "Invalid edit index"}), 400
 
         proposal.edits[edit_index].approved = False
+
+        edit = proposal.edits[edit_index]
+        seen_store.record_outcome(
+            proposal.article.title,
+            proposal.article.revision_id,
+            "rejected",
+            edit_type=edit.edit_type.value,
+            confidence=edit.confidence,
+            source_type=edit.source.source_type.value if edit.source else None,
+            reliability=edit.source.reliability.value if edit.source and edit.source.reliability else None,
+            policy_reference=edit.policy_reference,
+        )
 
         return jsonify({"success": True})
 
@@ -351,6 +402,17 @@ def create_app() -> Flask:
             proposal.status = "pushed"
             proposal.reviewed_at = datetime.now()
             seen_store.mark_seen(proposal.article.title, proposal.article.revision_id, "pushed")
+            for edit in approved_edits:
+                seen_store.record_outcome(
+                    proposal.article.title,
+                    proposal.article.revision_id,
+                    "pushed",
+                    edit_type=edit.edit_type.value,
+                    confidence=edit.confidence,
+                    source_type=edit.source.source_type.value if edit.source else None,
+                    reliability=edit.source.reliability.value if edit.source and edit.source.reliability else None,
+                    policy_reference=edit.policy_reference,
+                )
             return jsonify({"success": True, "message": message})
 
         return jsonify({"error": message}), 500
@@ -374,6 +436,17 @@ def create_app() -> Flask:
         diff = push_service.preview_diff(proposal, modified_text)
 
         return jsonify({"diff": diff})
+
+    @app.route("/stats")
+    def stats_page():
+        """Approval/success rates by dimension, aggregated from the outcomes table."""
+        store_ok, dimensions = True, {}
+        try:
+            for dimension in STATS_DIMENSIONS:
+                dimensions[dimension] = {v: (s, t) for v, (s, t) in seen_store.dimension_rates(dimension).items() if t > 0}
+        except sqlite3.Error:
+            store_ok = False
+        return render_template("stats.html", dimensions=dimensions, store_ok=store_ok)
 
     @app.route("/review/<proposal_id>")
     def review_proposal_page(proposal_id: str):

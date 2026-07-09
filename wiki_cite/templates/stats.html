@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+
+{% block title %}Stats — WikiCite{% endblock %}
+
+{% block content %}
+<main>
+    <div class="panel">
+        <div class="eyebrow">Outcomes feedback</div>
+        <h1 class="page-title">Approval &amp; success rates <span class="accent">by dimension</span></h1>
+        <p class="lead">Aggregated from every skip, proposal, approval, rejection, and push recorded so far. Sample counts are always shown alongside the rate.</p>
+    </div>
+
+    {% if not store_ok %}
+    <div class="banner error" style="margin-top:20px;">Could not read the outcomes database — showing no data.</div>
+    {% endif %}
+
+    {% for dimension, values in dimensions.items() %}
+    <div class="section-head">
+        <h2>{{ dimension }}</h2>
+    </div>
+    <div class="panel">
+        {% if values %}
+        <table style="width:100%; border-collapse:collapse;">
+            {% for value, counts in values | dictsort %}
+            <tr>
+                <td style="padding:6px 0; color:#3a4433;">{{ value }}</td>
+                <td class="mono" style="padding:6px 0; text-align:right; color:#6b7263;">{{ counts[0] }}/{{ counts[1] }} ({{ "%.0f"|format((counts[0] / counts[1]) * 100) }}%)</td>
+            </tr>
+            {% endfor %}
+        </table>
+        {% else %}
+        <p class="muted">No data yet.</p>
+        {% endif %}
+    </div>
+    {% endfor %}
+</main>
+{% endblock %}

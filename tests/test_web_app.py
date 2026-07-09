@@ -5,7 +5,10 @@ from unittest.mock import Mock, patch
 import pytest
 
 from wiki_cite import web_app
-from wiki_cite.config import Config
+from wiki_cite.config import Config, set_config
+from wiki_cite.models import Article, EditProposal, EditType, ProposedEdit
+from wiki_cite.seen_store import SeenStore
+from wiki_cite.web_app import create_app
 
 
 @pytest.fixture
@@ -44,6 +47,24 @@ def client_with_seeded_categories():
         app = web_app.create_app()
         app.config["TESTING"] = True
         yield app.test_client(), fake_site, picker_cls.return_value
+
+
+@pytest.fixture
+def app(tmp_path, monkeypatch):
+    # ArticlePicker/WikipediaPushService open a real mwclient.Site connection
+    # when constructed without one; stub it out so app creation stays offline.
+    monkeypatch.setattr("mwclient.Site", Mock())
+    set_config(Config(SEEN_DB_PATH=str(tmp_path / "seen.db")))
+    return create_app()
+
+
+def make_proposal() -> EditProposal:
+    article = Article(title="Groveland Four", url="https://en.wikipedia.org/wiki/Groveland_Four", wikitext="...", revision_id="123")
+    edits = [
+        ProposedEdit(edit_type=EditType.CITATION_ADDED, original_text="a", proposed_text="a[1]", rationale="sourced", confidence="high"),
+        ProposedEdit(edit_type=EditType.GRAMMAR_FIX, original_text="b", proposed_text="b.", rationale="grammar", confidence="medium"),
+    ]
+    return EditProposal(id="p1", article=article, edits=edits)
 
 
 def test_search_categories_success(client_and_site):
@@ -147,3 +168,96 @@ def test_post_category_settings_rejects_non_string_elements(client_and_site):
 
     assert response.status_code == 400
     assert client.get("/api/settings/categories").get_json() == {"include": [], "exclude": []}
+
+
+def test_approve_edit_persists_outcome(app, tmp_path):
+    proposal = make_proposal()
+    app.proposals[proposal.id] = proposal
+    client = app.test_client()
+
+    response = client.post(f"/api/proposals/{proposal.id}/approve-edit/0")
+    assert response.status_code == 200
+
+    fresh_store = SeenStore(tmp_path / "seen.db")
+    successes, total = fresh_store.dimension_rates("edit_type")["citation"]
+    assert (successes, total) == (1, 1)
+
+
+def test_reject_edit_persists_outcome(app, tmp_path):
+    proposal = make_proposal()
+    app.proposals[proposal.id] = proposal
+    client = app.test_client()
+
+    response = client.post(f"/api/proposals/{proposal.id}/reject-edit/1")
+    assert response.status_code == 200
+
+    fresh_store = SeenStore(tmp_path / "seen.db")
+    successes, total = fresh_store.dimension_rates("edit_type", success_outcomes=("rejected",))["grammar"]
+    assert (successes, total) == (1, 1)
+
+
+def test_approve_then_reject_two_edits_survive_restart(app, tmp_path):
+    proposal = make_proposal()
+    app.proposals[proposal.id] = proposal
+    client = app.test_client()
+
+    client.post(f"/api/proposals/{proposal.id}/approve-edit/0")
+    client.post(f"/api/proposals/{proposal.id}/reject-edit/1")
+
+    # Simulate a restart: discard the app/store, re-open the same DB file.
+    del app
+    fresh_store = SeenStore(tmp_path / "seen.db")
+    approved, total_citation = fresh_store.dimension_rates("edit_type")["citation"]
+    assert (approved, total_citation) == (1, 1)
+
+    rejected, total_grammar = fresh_store.dimension_rates("edit_type", success_outcomes=("rejected",))["grammar"]
+    assert (rejected, total_grammar) == (1, 1)
+
+
+def test_stats_route_renders_rates(app):
+    proposal = make_proposal()
+    app.proposals[proposal.id] = proposal
+    client = app.test_client()
+    client.post(f"/api/proposals/{proposal.id}/approve-edit/0")
+
+    response = client.get("/stats")
+
+    assert response.status_code == 200
+    assert b"citation" in response.data
+    assert b"1/1" in response.data
+
+
+def test_stats_route_empty_db_no_error(app):
+    client = app.test_client()
+
+    response = client.get("/stats")
+
+    assert response.status_code == 200
+    assert b"No data yet" in response.data
+
+
+def test_stats_route_corrupt_db_no_500(tmp_path, monkeypatch):
+    """AC6.3: a corrupt outcomes DB degrades /stats to 200 + 'no data', never a 500."""
+    monkeypatch.setattr("mwclient.Site", Mock())
+    db_path = tmp_path / "corrupt.db"
+    db_path.write_bytes(b"not a real sqlite database file")
+    set_config(Config(SEEN_DB_PATH=str(db_path)))
+
+    app = create_app()
+    client = app.test_client()
+
+    response = client.get("/stats")
+
+    assert response.status_code == 200
+    assert b"No data yet" in response.data
+
+
+def test_create_app_with_missing_db_dir_does_not_raise(tmp_path, monkeypatch):
+    """AC6.3: create_app() must not raise when seen_db_path's parent directory doesn't exist."""
+    monkeypatch.setattr("mwclient.Site", Mock())
+    missing_dir_db = tmp_path / "does" / "not" / "exist" / "seen.db"
+    set_config(Config(SEEN_DB_PATH=str(missing_dir_db)))
+
+    app = create_app()  # must not raise
+
+    assert app is not None

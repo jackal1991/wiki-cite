@@ -31,3 +31,9 @@ article_selection:
   exclude_blp: true
   exclude_protected: true
   max_wikitext_chars: 12000  # cost guard: skip articles longer than this so no single Claude prompt is huge
+  candidate_pool_size: 30    # look-ahead pool size (>= limit) that the feedback scorer ranks before yielding
+
+feedback:
+  enabled: true
+  epsilon: 0.15       # exploration jitter added to every candidate score
+  min_samples: 5      # dimension values below this sample count get the neutral 0.5 prior
