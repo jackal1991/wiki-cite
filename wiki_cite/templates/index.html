@@ -10,7 +10,7 @@
         <p class="lead">Each proposal fixes grammar, adds wikilinks, and cites claims already present in a stub article. Nothing new is written. You review every change before it reaches Wikipedia.</p>
         <div style="margin-top:22px; display:flex; align-items:center; gap:16px; flex-wrap:wrap;">
             <button class="btn-primary" id="fetch-btn" onclick="fetchNewArticle()">Fetch new article</button>
-            <span style="font-size:13px; color:#7a8271;">Scans stubs lacking sources · skips living persons &amp; protected pages</span>
+            <span style="font-size:13px; color:#656b5c;">Scans stubs lacking sources · skips living persons &amp; protected pages</span>
         </div>
     </div>
 
@@ -36,16 +36,24 @@
         </div>
         <p class="working-sub" id="working-sub">Watch below: the agent reads a short unsourced stub and proposes only minimal, sourced edits for claims already in the text.</p>
 
-        <div class="agent-view">
-            <div class="agent-view-bar">
-                <span class="agent-view-dots"><span></span><span></span><span></span></span>
-                <span class="agent-view-file" id="agent-file">agent view · waiting…</span>
-                <span class="agent-view-live"><span class="dot"></span> live</span>
+        <div class="agent-panes" role="group" aria-label="Agent working view">
+            <div class="agent-pane article-pane">
+                <div class="agent-pane-head">
+                    <span class="agent-view-dots"><span></span><span></span><span></span></span>
+                    <span class="agent-pane-head-label">Article source</span>
+                    <span class="agent-view-file" id="agent-file">agent view · waiting…</span>
+                    <span class="agent-view-live"><span class="dot"></span> live</span>
+                </div>
+                <div class="agent-view-body" id="agent-body">
+                    <div style="color:#6f9a80;">Connecting to the agent…</div>
+                </div>
             </div>
-            <div class="agent-view-body" id="agent-body">
-                <div style="color:#6f9a80;">Connecting to the agent…</div>
+            <div class="agent-pane activity-pane">
+                <div class="agent-pane-head">
+                    <span class="agent-pane-head-label">Agent activity</span>
+                </div>
+                <div class="agent-log" id="agent-log" aria-live="polite"></div>
             </div>
-            <div class="agent-log" id="agent-log"></div>
         </div>
 
         <div class="pipeline" id="pipeline"></div>
@@ -315,7 +323,7 @@
             const proposals = await response.json();
             countEl.textContent = proposals.length;
             if (proposals.length === 0) {
-                listDiv.innerHTML = '<div class="panel" style="text-align:center; color:#7a8271;">No proposals yet. Click <strong>Fetch new article</strong> to get started.</div>';
+                listDiv.innerHTML = '<div class="panel" style="text-align:center; color:#656b5c;">No proposals yet. Click <strong>Fetch new article</strong> to get started.</div>';
                 return;
             }
             listDiv.innerHTML = proposals.map(proposalCard).join('');

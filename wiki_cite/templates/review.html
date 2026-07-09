@@ -207,7 +207,7 @@
     async function loadSourcePreview(index) {
         const el = document.getElementById(`source-content-${index}`);
         el.dataset.open = 'true';
-        el.innerHTML = '<p style="color:#7a8271; margin-top:11px; font-size:13px;">Loading source preview…</p>';
+        el.innerHTML = '<p style="color:#656b5c; margin-top:11px; font-size:13px;">Loading source preview…</p>';
 
         try {
             const response = await fetch(`/api/proposals/${proposalId}/edits/${index}/source-preview`);
