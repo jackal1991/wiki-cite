@@ -120,7 +120,7 @@ class ArticlePicker:
                 fetching progresses through the category instead of restarting at the top.
         """
         self.config = get_config()
-        self.site = site or mwclient.Site("en.wikipedia.org")
+        self.site = site or mwclient.Site("en.wikipedia.org", clients_useragent=self.config.wikipedia.user_agent)
         self.seen_store = seen_store
 
     def is_blp(self, page_text: str, categories: list[str]) -> bool:
@@ -302,31 +302,43 @@ class ArticlePicker:
         Returns:
             Tuple of (is_candidate, reason_if_not)
         """
+        ok, reason, _, _ = self._evaluate_candidate(page, include_categories, exclude_categories)
+        return ok, reason
+
+    def _evaluate_candidate(
+        self,
+        page,
+        include_categories: list[str] | None,
+        exclude_categories: list[str] | None,
+    ) -> tuple[bool, str, str | None, list[str] | None]:
+        """Core is_candidate logic. Also returns the fetched page text/categories
+        (or None if rejected before fetching them) so fetch_candidates can reuse
+        them in _build_candidate instead of re-fetching from Wikipedia."""
         # Skip redirects
         if page.redirect:
-            return False, "redirect"
+            return False, "redirect", None, None
 
         # Only main-namespace articles (namespace 0) — skip Category:/Template:/etc.
         if getattr(page, "namespace", 0) != 0:
-            return False, "not an article namespace"
+            return False, "not an article namespace", None, None
 
         # Check protection
         if self.config.article_selection.exclude_protected and self.is_protected(page):
-            return False, "protected"
+            return False, "protected", None, None
 
         # Get page text and categories
         try:
             page_text = page.text()
         except Exception as e:
-            return False, f"error reading page: {e}"
+            return False, f"error reading page: {e}", None, None
 
         if not page_text:
-            return False, "empty page"
+            return False, "empty page", None, None
 
         # Cost guard: don't spend a Claude call on a very long article.
         max_chars = self.config.article_selection.max_wikitext_chars
         if max_chars and len(page_text) > max_chars:
-            return False, f"too long to analyze ({len(page_text)} chars)"
+            return False, f"too long to analyze ({len(page_text)} chars)", page_text, None
 
         categories = self.get_categories(page)
 
@@ -334,22 +346,25 @@ class ArticlePicker:
         exclude = exclude_categories if exclude_categories is not None else self.config.article_selection.exclude_categories
         ok, reason = self.category_filter(categories, include, exclude)
         if not ok:
-            return False, reason
+            return False, reason, page_text, categories
 
         # Check if BLP
         if self.config.article_selection.exclude_blp and self.is_blp(page_text, categories):
-            return False, "BLP article"
+            return False, "BLP article", page_text, categories
 
         # Require at least one inline {{Citation needed}} claim to source.
         if not self.extract_citation_needed_claims(page_text):
-            return False, "no citation-needed tag"
+            return False, "no citation-needed tag", page_text, categories
 
-        return True, ""
+        return True, "", page_text, categories
 
-    def _build_candidate(self, page) -> CandidateArticle:
-        """Build a CandidateArticle from an mwclient page already known to be a candidate."""
-        page_text = page.text()
-        categories = self.get_categories(page)
+    def _build_candidate(self, page, page_text: str, categories: list[str]) -> CandidateArticle:
+        """Build a CandidateArticle from an mwclient page already known to be a candidate.
+
+        Takes the page text/categories already fetched by _evaluate_candidate
+        instead of re-fetching them, so each pooled candidate costs one round
+        of Wikipedia API calls instead of two.
+        """
         body_lines = self.count_body_lines(page_text)
 
         # Check for infobox
@@ -430,16 +445,12 @@ class ArticlePicker:
                 continue
 
             # Check if this is a candidate
-            is_candidate, _ = self.is_candidate(
-                page,
-                include_categories=include_categories,
-                exclude_categories=exclude_categories,
-            )
-            if not is_candidate:
+            is_ok, _, page_text, categories = self._evaluate_candidate(page, include_categories, exclude_categories)
+            if not is_ok:
                 continue
 
             try:
-                pool.append(self._build_candidate(page))
+                pool.append(self._build_candidate(page, page_text, categories))
             except Exception as e:
                 print(f"Error processing page {page.name}: {e}")
                 continue

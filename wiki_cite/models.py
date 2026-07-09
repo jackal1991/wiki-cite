@@ -222,5 +222,4 @@ class EditProposal:
         if counts.get("formatting"):
             parts.append("formatting")
 
-        summary = "Copyedit: " + ", ".join(parts)
-        return summary + " (AI-assisted citation/cleanup, human-reviewed)"
+        return "Copyedit: " + ", ".join(parts)

@@ -54,7 +54,7 @@ class WikipediaPushService:
         self.site = site
 
         if self.site is None:
-            self.site = mwclient.Site("en.wikipedia.org")
+            self.site = mwclient.Site("en.wikipedia.org", clients_useragent=self.config.wikipedia.user_agent)
 
             # Login if credentials provided
             if self.config.wikipedia_username and self.config.wikipedia_password:

@@ -47,7 +47,7 @@ class WikipediaConfig(BaseSettings):
 
     edit_summary_suffix: str = "(AI-assisted citation/cleanup, human-reviewed)"
     rate_limit_edits_per_hour: int = 10
-    user_agent: str = "WikiCiteBot/1.0 (https://github.com/yourorg/wiki-cite; citation-cleanup-assistant)"
+    user_agent: str = "WikiCiteBot/1.0 (hyphens.fable.4v@icloud.com; citation-cleanup-assistant)"
 
 
 class ArticleSelectionConfig(BaseSettings):

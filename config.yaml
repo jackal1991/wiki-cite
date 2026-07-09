@@ -21,7 +21,7 @@ sources:
 wikipedia:
   edit_summary_suffix: "(AI-assisted citation/cleanup, human-reviewed)"
   rate_limit_edits_per_hour: 10
-  user_agent: "WikiCiteBot/1.0 (https://github.com/yourorg/wiki-cite; citation-cleanup-assistant)"
+  user_agent: "WikiCiteBot/1.0 (hyphens.fable.4v@icloud.com; citation-cleanup-assistant)"
 
 article_selection:
   # Tracking category for inline {{Citation needed}} tags (the Citation Hunt signal):

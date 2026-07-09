@@ -80,7 +80,6 @@ def test_edit_proposal_summary():
     summary = proposal.get_edit_summary()
     assert "citation" in summary.lower()
     assert "grammar" in summary.lower()
-    assert "AI-assisted" in summary
 
 
 def test_get_approved_edits():

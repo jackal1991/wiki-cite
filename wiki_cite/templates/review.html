@@ -40,7 +40,10 @@
         <!-- Combined diff -->
         <div class="combined-diff">
             <div class="head">
-                <h3>Combined diff preview</h3>
+                <div>
+                    <h3>Combined diff preview</h3>
+                    <div class="combined-diff-article" id="combined-diff-article"></div>
+                </div>
                 <button class="btn-ghost" id="diff-toggle" onclick="toggleDiff()">Show combined diff</button>
             </div>
             <pre id="diff-preview" style="display:none;"></pre>
@@ -89,6 +92,7 @@
             document.getElementById('article-url').href = proposal.article.url;
             document.getElementById('article-rev').textContent = proposal.article.revision_id ? `rev ${proposal.article.revision_id}` : '';
             document.getElementById('sticky-article').textContent = proposal.article.title;
+            document.getElementById('combined-diff-article').textContent = proposal.article.title;
 
             renderEdits();
 
