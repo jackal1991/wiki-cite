@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 import pytest
 
-from wiki_cite.agent import PROPOSE_EDITS_TOOL, ClaudeAgent
+from wiki_cite.agent import PROPOSE_EDITS_TOOL, SEARCH_SYSTEM_PROMPT, ClaudeAgent
 from wiki_cite.models import Article, EditType, ProposedEdit, ReliabilityRating, Source, SourceType
 
 
@@ -55,6 +55,26 @@ def _run_events(agent, article):
         if event["type"] == "analyzed":
             proposal = event["proposal"]
     return events, proposal
+
+
+def test_search_system_prompt_carries_sourcing_policy():
+    """The Citation Addition guidance must encode WP:RS / WP:PSTS / WP:SPS so the agent's
+    in-loop source choices are grounded in policy (issue #7)."""
+    prompt = SEARCH_SYSTEM_PROMPT
+    # Policy shorthands present (match the WP:MOS/WP:BLP style already in the prompt).
+    for token in ("WP:RS", "WP:PSTS", "WP:SPS"):
+        assert token in prompt, f"missing policy reference {token}"
+
+    lowered = prompt.lower()
+    # WP:RS reliability criteria.
+    assert "editorial oversight" in lowered
+    assert "independent" in lowered
+    # WP:PSTS: prefer secondary over primary.
+    assert "secondary" in lowered and "primary" in lowered
+    # WP:SPS: exclude self-published / UGC.
+    assert "self-published" in lowered
+    for banned in ("blog", "forum", "social media"):
+        assert banned in lowered, f"expected {banned} in self-published exclusions"
 
 
 # --- Extraction / apply_edits (unchanged behavior) --------------------------
