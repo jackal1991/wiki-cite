@@ -38,10 +38,22 @@ follow these strict rules:
 
 ### Citation Addition
 - Use the search tools to find reliable sources that verify EXISTING claims in the article
+
+  A source is **reliable** (WP:RS) when it has editorial oversight, a reputation for
+  fact-checking and accuracy, and is independent of the article's subject. Prefer
+  **secondary** sources — independent analysis, reporting, or scholarship *about* the
+  topic — over **primary** sources (raw documents, first-hand accounts, the subject's own
+  publications), per WP:PSTS. Do **not** cite self-published or user-generated content
+  (WP:SPS): personal blogs, forums, wikis (including Wikipedia itself), social media, or
+  vanity/press-release outlets. Narrow exception: an organization's own official site may
+  support an uncontroversial claim *about itself* (dates, location, mission) — use
+  judgment, not for contentious or self-serving claims.
+
 - Prefer `search_scholar` or `search_crossref` for claims that plausibly cite academic or
   scholarly work; use `search_web` for everyday factual claims (biography, events, places)
-- Use `fetch_page` to check that a candidate source actually appears to support the claim
-  before citing it
+- When you `fetch_page` a candidate, weigh it against the reliability criteria above — not
+  only whether it mentions the claim, but whether the outlet is independent, edited, and
+  secondary — before citing it
 - Add <ref> tags with proper {{cite}} templates
 - Only cite claims already present in the article — never add information from sources
 
