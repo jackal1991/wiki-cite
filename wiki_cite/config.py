@@ -96,6 +96,10 @@ class Config(BaseSettings):
     flask_secret_key: str = Field(default="dev-secret-key", alias="FLASK_SECRET_KEY")
     # SQLite file tracking already-processed articles (keeps fetch idempotent).
     seen_db_path: str = Field(default="wiki_cite_seen.db", alias="SEEN_DB_PATH")
+    # Rotating log file capturing warnings/errors (e.g. rate-limit responses from
+    # search APIs) regardless of how the process was launched or whether its
+    # stdout/stderr is being watched.
+    log_file: str = Field(default="wiki_cite.log", alias="LOG_FILE")
 
     @classmethod
     def load(cls, config_path: str | Path = "config.yaml") -> "Config":

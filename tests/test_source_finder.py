@@ -160,6 +160,64 @@ def test_search_web_with_api_key(source_finder):
         assert sources[0].reliability == ReliabilityRating.GENERALLY_RELIABLE
 
 
+def test_search_web_caches_identical_query(source_finder):
+    """Test that a repeated identical search is served from cache, not the network."""
+    source_finder.config.brave_api_key = "test-key"
+
+    with patch.object(source_finder.session, "get") as mock_get:
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"web": {"results": [{"title": "Example", "url": "https://example.com"}]}}
+        mock_get.return_value = mock_response
+
+        first = source_finder.search_web("test claim")
+        second = source_finder.search_web("test claim")
+
+        assert mock_get.call_count == 1
+        assert first == second
+
+
+def test_search_web_different_query_bypasses_cache(source_finder):
+    """Test that a different query is not served from another query's cache entry."""
+    source_finder.config.brave_api_key = "test-key"
+
+    with patch.object(source_finder.session, "get") as mock_get:
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"web": {"results": []}}
+        mock_get.return_value = mock_response
+
+        source_finder.search_web("first claim")
+        source_finder.search_web("second claim")
+
+        assert mock_get.call_count == 2
+
+
+def test_search_semantic_scholar_rate_limited_logs_and_returns_empty(source_finder, caplog):
+    """Test that a 429 is logged (not silently swallowed) and yields no sources."""
+    source_finder.config.semantic_scholar_api_key = "test-key"
+
+    with patch.object(source_finder.session, "get") as mock_get:
+        mock_response = Mock()
+        mock_response.status_code = 429
+        mock_response.headers = {"Retry-After": "30"}
+        mock_get.return_value = mock_response
+
+        with caplog.at_level("WARNING"):
+            sources = source_finder.search_semantic_scholar("test query")
+
+        assert sources == []
+        assert any("429" in record.message for record in caplog.records)
+
+
+def test_source_finder_session_retries_on_429():
+    """Test that the shared session is configured to retry rate-limited responses."""
+    finder = SourceFinder()
+    adapter = finder.session.get_adapter("https://api.semanticscholar.org")
+    assert 429 in adapter.max_retries.status_forcelist
+    assert adapter.max_retries.respect_retry_after_header is True
+
+
 def test_fetch_page_preview_no_url(source_finder):
     """Test that preview fetching handles a missing URL gracefully."""
     preview = source_finder.fetch_page_preview("")

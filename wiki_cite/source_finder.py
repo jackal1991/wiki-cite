@@ -2,15 +2,27 @@
 Source Finding service for discovering citations for existing claims.
 """
 
+import logging
 import re
+import time
+from collections.abc import Callable
 from urllib.parse import urlparse
 
 import mwparserfromhell
 import requests
 from bs4 import BeautifulSoup
+from requests.adapters import HTTPAdapter
+from urllib3.util import Retry
 
 from wiki_cite.config import get_config
 from wiki_cite.models import ReliabilityRating, Source, SourceType
+
+logger = logging.getLogger(__name__)
+
+# Identical (api, query, max_results) searches within this window are served from
+# an in-memory cache instead of re-hitting the network — cuts both latency and
+# quota pressure on rate-limited search APIs (e.g. Semantic Scholar).
+_SEARCH_CACHE_TTL_SECONDS = 3600
 
 # Wikipedia's Reliable Sources Perennial (simplified version)
 # In production, this should be fetched from WP:RSP
@@ -73,6 +85,33 @@ class SourceFinder:
         self.config = get_config()
         self.session = requests.Session()
         self.session.headers.update({"User-Agent": self.config.wikipedia.user_agent})
+
+        # Respect 429/5xx responses: back off and retry, honoring Retry-After
+        # when the API sends one, instead of hammering an API that just rate-limited us.
+        retry = Retry(
+            total=3,
+            backoff_factor=1.0,
+            status_forcelist=(429, 500, 502, 503, 504),
+            respect_retry_after_header=True,
+            allowed_methods=("GET", "HEAD"),
+        )
+        adapter = HTTPAdapter(max_retries=retry)
+        self.session.mount("https://", adapter)
+        self.session.mount("http://", adapter)
+
+        self._search_cache: dict[tuple, tuple[float, list[Source]]] = {}
+
+    def _cached_search(self, cache_key: tuple, fetch: Callable[[], list[Source]]) -> list[Source]:
+        """Serve a repeated identical search from the in-memory TTL cache, or run
+        ``fetch`` and cache its result."""
+        now = time.monotonic()
+        cached = self._search_cache.get(cache_key)
+        if cached is not None and now < cached[0]:
+            return cached[1]
+
+        sources = fetch()
+        self._search_cache[cache_key] = (now + _SEARCH_CACHE_TTL_SECONDS, sources)
+        return sources
 
     def check_reliability(self, url: str) -> ReliabilityRating:
         """Check the reliability of a source based on its domain.
@@ -162,25 +201,32 @@ class SourceFinder:
         Returns:
             List of Source objects
         """
-        sources = []
-
         api_key = self.config.semantic_scholar_api_key
         if not api_key:
-            return sources
+            return []
 
-        try:
-            url = "https://api.semanticscholar.org/graph/v1/paper/search"
-            params = {
-                "query": query,
-                "limit": max_results,
-                "fields": "title,authors,year,doi,url,venue",
-            }
-            headers = {"x-api-key": api_key} if api_key else {}
+        def fetch() -> list[Source]:
+            sources = []
+            try:
+                url = "https://api.semanticscholar.org/graph/v1/paper/search"
+                params = {
+                    "query": query,
+                    "limit": max_results,
+                    "fields": "title,authors,year,doi,url,venue",
+                }
+                headers = {"x-api-key": api_key} if api_key else {}
 
-            response = self.session.get(url, params=params, headers=headers, timeout=10)
-            if response.status_code == 200:
+                response = self.session.get(url, params=params, headers=headers, timeout=10)
+                if response.status_code != 200:
+                    logger.warning(
+                        "Semantic Scholar search failed: status=%s retry_after=%s query=%r",
+                        response.status_code,
+                        response.headers.get("Retry-After"),
+                        query,
+                    )
+                    return sources
+
                 data = response.json()
-
                 for paper in data.get("data", []):
                     authors = [a.get("name", "") for a in paper.get("authors", [])]
                     source = Source(
@@ -195,10 +241,12 @@ class SourceFinder:
                     )
                     sources.append(source)
 
-        except Exception as e:
-            print(f"Error searching Semantic Scholar: {e}")
+            except Exception as e:
+                logger.warning("Error searching Semantic Scholar: %s", e)
 
-        return sources
+            return sources
+
+        return self._cached_search(("semantic_scholar", query, max_results), fetch)
 
     def search_crossref(self, query: str, max_results: int = 5) -> list[Source]:
         """Search CrossRef for published sources.
@@ -210,24 +258,31 @@ class SourceFinder:
         Returns:
             List of Source objects
         """
-        sources = []
-
         email = self.config.crossref_email
         if not email:
-            return sources
+            return []
 
-        try:
-            url = "https://api.crossref.org/works"
-            params = {
-                "query": query,
-                "rows": max_results,
-                "mailto": email,
-            }
+        def fetch() -> list[Source]:
+            sources = []
+            try:
+                url = "https://api.crossref.org/works"
+                params = {
+                    "query": query,
+                    "rows": max_results,
+                    "mailto": email,
+                }
 
-            response = self.session.get(url, params=params, timeout=10)
-            if response.status_code == 200:
+                response = self.session.get(url, params=params, timeout=10)
+                if response.status_code != 200:
+                    logger.warning(
+                        "CrossRef search failed: status=%s retry_after=%s query=%r",
+                        response.status_code,
+                        response.headers.get("Retry-After"),
+                        query,
+                    )
+                    return sources
+
                 data = response.json()
-
                 for item in data.get("message", {}).get("items", []):
                     # Extract authors
                     authors = []
@@ -271,10 +326,12 @@ class SourceFinder:
                     )
                     sources.append(source)
 
-        except Exception as e:
-            print(f"Error searching CrossRef: {e}")
+            except Exception as e:
+                logger.warning("Error searching CrossRef: %s", e)
 
-        return sources
+            return sources
+
+        return self._cached_search(("crossref", query, max_results), fetch)
 
     def search_web(self, query: str, max_results: int = 5) -> list[Source]:
         """Search the general web (via Brave Search) for news/reference sources.
@@ -289,21 +346,28 @@ class SourceFinder:
         Returns:
             List of Source objects
         """
-        sources = []
-
         api_key = self.config.brave_api_key
         if not api_key:
-            return sources
+            return []
 
-        try:
-            url = "https://api.search.brave.com/res/v1/web/search"
-            params = {"q": query, "count": max_results}
-            headers = {"Accept": "application/json", "X-Subscription-Token": api_key}
+        def fetch() -> list[Source]:
+            sources = []
+            try:
+                url = "https://api.search.brave.com/res/v1/web/search"
+                params = {"q": query, "count": max_results}
+                headers = {"Accept": "application/json", "X-Subscription-Token": api_key}
 
-            response = self.session.get(url, params=params, headers=headers, timeout=10)
-            if response.status_code == 200:
+                response = self.session.get(url, params=params, headers=headers, timeout=10)
+                if response.status_code != 200:
+                    logger.warning(
+                        "Brave web search failed: status=%s retry_after=%s query=%r",
+                        response.status_code,
+                        response.headers.get("Retry-After"),
+                        query,
+                    )
+                    return sources
+
                 data = response.json()
-
                 for result in data.get("web", {}).get("results", [])[:max_results]:
                     result_url = result.get("url", "")
                     source = Source(
@@ -316,10 +380,12 @@ class SourceFinder:
                     )
                     sources.append(source)
 
-        except Exception as e:
-            print(f"Error searching web: {e}")
+            except Exception as e:
+                logger.warning("Error searching web: %s", e)
 
-        return sources
+            return sources
+
+        return self._cached_search(("web_search", query, max_results), fetch)
 
     def fetch_page_preview(self, url: str) -> dict:
         """Fetch a lightweight preview of a source page for reviewer verification.

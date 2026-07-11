@@ -2,9 +2,11 @@
 Article Picker component for selecting Wikipedia articles to clean up.
 """
 
+import logging
 import random
 import re
 import sqlite3
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from collections.abc import Iterator
 
@@ -13,6 +15,13 @@ import mwparserfromhell
 
 from wiki_cite.config import get_config
 from wiki_cite.models import CandidateArticle
+
+logger = logging.getLogger(__name__)
+
+# Concurrent Wikipedia page fetches while building the candidate pool. mwclient's
+# Site shares one requests.Session but builds a fresh per-request headers/args dict
+# (see mwclient.client.Site.raw_call), so concurrent reads are safe.
+_POOL_FETCH_WORKERS = 8
 
 # Matches inline {{Citation needed}} tags and its common redirects ({{cn}}, {{fact}}).
 # These are the signal Citation Hunt surfaces: a specific claim needing a source.
@@ -430,11 +439,35 @@ class ArticlePicker:
         try:
             cat_page = self.site.pages[f"Category:{category}"]
         except Exception as e:
-            print(f"Error accessing category {category}: {e}")
+            logger.warning("Error accessing category %r: %s", category, e)
             return
 
         pool_size = max(self.config.article_selection.candidate_pool_size, limit)
         pool: list[CandidateArticle] = []
+        batch: list = []
+
+        def evaluate_batch(pages: list) -> list[CandidateArticle]:
+            """Evaluate a batch of candidate pages concurrently (each costs its own
+            round of Wikipedia API calls, so this is the expensive part of pool-building).
+
+            Results are collected in submission order, not completion order, so the
+            no-scorer fallback (plain category order) is unaffected by which page's
+            fetch happens to finish first.
+            """
+            built: list[CandidateArticle] = []
+            with ThreadPoolExecutor(max_workers=_POOL_FETCH_WORKERS) as executor:
+                futures = [executor.submit(self._evaluate_candidate, page, include_categories, exclude_categories) for page in pages]
+                for page, future in zip(pages, futures):
+                    is_ok, _, page_text, categories = future.result()
+                    if not is_ok:
+                        continue
+                    try:
+                        built.append(self._build_candidate(page, page_text, categories))
+                    except Exception as e:
+                        logger.warning("Error processing page %r: %s", page.name, e)
+                        continue
+            return built
+
         for page in cat_page:
             if len(pool) >= pool_size:
                 break
@@ -444,16 +477,13 @@ class ArticlePicker:
             if self.seen_store is not None and self.seen_store.is_seen(page.name):
                 continue
 
-            # Check if this is a candidate
-            is_ok, _, page_text, categories = self._evaluate_candidate(page, include_categories, exclude_categories)
-            if not is_ok:
-                continue
+            batch.append(page)
+            if len(batch) >= _POOL_FETCH_WORKERS:
+                pool.extend(evaluate_batch(batch))
+                batch = []
 
-            try:
-                pool.append(self._build_candidate(page, page_text, categories))
-            except Exception as e:
-                print(f"Error processing page {page.name}: {e}")
-                continue
+        if batch and len(pool) < pool_size:
+            pool.extend(evaluate_batch(batch))
 
         scorer = self._build_scorer()
         ranked = sorted(pool, key=scorer.score, reverse=True) if scorer else pool

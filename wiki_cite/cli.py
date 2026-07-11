@@ -3,7 +3,9 @@ Command-line interface for the Wikipedia Citation & Cleanup Tool.
 """
 
 import argparse
+import logging
 import sys
+from logging.handlers import RotatingFileHandler
 
 from wiki_cite.agent import ClaudeAgent
 from wiki_cite.article_picker import ArticlePicker
@@ -12,6 +14,24 @@ from wiki_cite.models import Article
 from wiki_cite.seen_store import SeenStore
 from wiki_cite.stats import STATS_DIMENSIONS
 from wiki_cite.web_app import create_app
+
+
+def _configure_logging(log_file: str) -> None:
+    """Route wiki_cite's warnings/errors (rate-limit responses, store failures,
+    etc.) to both the console and a rotating file, so they're visible no matter
+    how the process was launched."""
+    package_logger = logging.getLogger("wiki_cite")
+    package_logger.setLevel(logging.INFO)
+
+    formatter = logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
+
+    file_handler = RotatingFileHandler(log_file, maxBytes=5_000_000, backupCount=3)
+    file_handler.setFormatter(formatter)
+    package_logger.addHandler(file_handler)
+
+    console_handler = logging.StreamHandler()
+    console_handler.setFormatter(formatter)
+    package_logger.addHandler(console_handler)
 
 
 def cmd_fetch_articles(args):
@@ -173,6 +193,8 @@ def main():
     if not args.command:
         parser.print_help()
         sys.exit(1)
+
+    _configure_logging(get_config().log_file)
 
     # Run command
     args.func(args)
