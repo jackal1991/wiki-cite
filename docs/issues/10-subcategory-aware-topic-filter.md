@@ -1,8 +1,14 @@
 # Issue #10 — Recursive/subcategory-aware category matching for article-selection topic filter
 
-**Status:** Ready
+**Status:** In Progress
 **Complexity:** Complex
 **GitHub:** https://github.com/jackal1991/wiki-cite/issues/10
+
+## Worktree
+
+- branch: feat/10-subcategory-aware-topic-filter
+- path: .worktrees/10-subcategory-aware-topic-filter
+- created: 2026-07-11
 
 ## Summary
 The topic filter added in #6 (`article_selection.include_categories`/`exclude_categories`)
