@@ -6,11 +6,13 @@ import logging
 import random
 import re
 import sqlite3
-from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from collections.abc import Iterator
 
 import mwclient
+import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util import Retry
 import mwparserfromhell
 
 from wiki_cite.config import get_config
@@ -18,10 +20,25 @@ from wiki_cite.models import CandidateArticle
 
 logger = logging.getLogger(__name__)
 
-# Concurrent Wikipedia page fetches while building the candidate pool. mwclient's
-# Site shares one requests.Session but builds a fresh per-request headers/args dict
-# (see mwclient.client.Site.raw_call), so concurrent reads are safe.
-_POOL_FETCH_WORKERS = 8
+
+def _build_session(user_agent: str) -> requests.Session:
+    """A requests.Session for mwclient that backs off and retries on 429/5xx,
+    honoring Retry-After when Wikipedia sends one (see mediawiki.org/wiki/API:Etiquette
+    — "Making your requests in series rather than in parallel... should result in a
+    safe request rate"; this is the reactive complement to staying sequential)."""
+    session = requests.Session()
+    session.headers.update({"User-Agent": user_agent})
+    retry = Retry(
+        total=3,
+        backoff_factor=1.0,
+        status_forcelist=(429, 500, 502, 503, 504),
+        respect_retry_after_header=True,
+        allowed_methods=("GET", "HEAD", "POST"),
+    )
+    adapter = HTTPAdapter(max_retries=retry)
+    session.mount("https://", adapter)
+    session.mount("http://", adapter)
+    return session
 
 # Matches inline {{Citation needed}} tags and its common redirects ({{cn}}, {{fact}}).
 # These are the signal Citation Hunt surfaces: a specific claim needing a source.
@@ -129,7 +146,10 @@ class ArticlePicker:
                 fetching progresses through the category instead of restarting at the top.
         """
         self.config = get_config()
-        self.site = site or mwclient.Site("en.wikipedia.org", clients_useragent=self.config.wikipedia.user_agent)
+        self.site = site or mwclient.Site(
+            "en.wikipedia.org",
+            pool=_build_session(self.config.wikipedia.user_agent),
+        )
         self.seen_store = seen_store
 
     def is_blp(self, page_text: str, categories: list[str]) -> bool:
@@ -448,30 +468,9 @@ class ArticlePicker:
 
         pool_size = max(self.config.article_selection.candidate_pool_size, limit)
         pool: list[CandidateArticle] = []
-        batch: list = []
-
-        def evaluate_batch(pages: list) -> list[CandidateArticle]:
-            """Evaluate a batch of candidate pages concurrently (each costs its own
-            round of Wikipedia API calls, so this is the expensive part of pool-building).
-
-            Results are collected in submission order, not completion order, so the
-            no-scorer fallback (plain category order) is unaffected by which page's
-            fetch happens to finish first.
-            """
-            built: list[CandidateArticle] = []
-            with ThreadPoolExecutor(max_workers=_POOL_FETCH_WORKERS) as executor:
-                futures = [executor.submit(self._evaluate_candidate, page, include_categories, exclude_categories) for page in pages]
-                for page, future in zip(pages, futures):
-                    is_ok, _, page_text, categories = future.result()
-                    if not is_ok:
-                        continue
-                    try:
-                        built.append(self._build_candidate(page, page_text, categories))
-                    except Exception as e:
-                        logger.warning("Error processing page %r: %s", page.name, e)
-                        continue
-            return built
-
+        # Sequential, one request in flight at a time — per mediawiki.org/wiki/API:Etiquette,
+        # "making your requests in series rather than in parallel... should result in a
+        # safe request rate."
         for page in cat_page:
             if len(pool) >= pool_size:
                 break
@@ -481,13 +480,15 @@ class ArticlePicker:
             if self.seen_store is not None and self.seen_store.is_seen(page.name):
                 continue
 
-            batch.append(page)
-            if len(batch) >= _POOL_FETCH_WORKERS:
-                pool.extend(evaluate_batch(batch))
-                batch = []
+            is_ok, _, page_text, categories = self._evaluate_candidate(page, include_categories, exclude_categories)
+            if not is_ok:
+                continue
 
-        if batch and len(pool) < pool_size:
-            pool.extend(evaluate_batch(batch))
+            try:
+                pool.append(self._build_candidate(page, page_text, categories))
+            except Exception as e:
+                logger.warning("Error processing page %r: %s", page.name, e)
+                continue
 
         scorer = self._build_scorer()
         ranked = sorted(pool, key=scorer.score, reverse=True) if scorer else pool

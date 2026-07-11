@@ -6,7 +6,7 @@ import sqlite3
 import pytest
 from unittest.mock import Mock
 
-from wiki_cite.article_picker import ArticlePicker, CandidateScorer, build_focused_excerpt
+from wiki_cite.article_picker import ArticlePicker, CandidateScorer, _build_session, build_focused_excerpt
 from wiki_cite.config import Config, get_config, set_config
 from wiki_cite.models import CandidateArticle
 from wiki_cite.seen_store import SeenStore
@@ -23,6 +23,17 @@ def mock_site():
 def picker(mock_site):
     """Create article picker with mock site."""
     return ArticlePicker(site=mock_site)
+
+
+def test_build_session_retries_on_429():
+    """The session mwclient uses must back off and retry on 429/5xx, honoring
+    Retry-After, since mwclient itself raises immediately on a 429 (client.py's
+    raw_call only retries 5xx/connection errors, never 4xx)."""
+    session = _build_session("TestBot/1.0 (test@example.com)")
+    adapter = session.get_adapter("https://en.wikipedia.org")
+    assert 429 in adapter.max_retries.status_forcelist
+    assert adapter.max_retries.respect_retry_after_header is True
+    assert session.headers["User-Agent"] == "TestBot/1.0 (test@example.com)"
 
 
 def test_count_body_lines_simple(picker):
