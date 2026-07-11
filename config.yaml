@@ -32,6 +32,7 @@ article_selection:
   exclude_protected: true
   max_wikitext_chars: 12000  # cost guard: skip articles longer than this so no single Claude prompt is huge
   candidate_pool_size: 30    # look-ahead pool size (>= limit) that the feedback scorer ranks before yielding
+  category_start_prefix: "A" # skip ahead of the numeral/punctuation-titled pages MediaWiki's default sortkey order lists first
 
 feedback:
   enabled: true

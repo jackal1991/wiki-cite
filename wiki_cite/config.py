@@ -62,6 +62,9 @@ class ArticleSelectionConfig(BaseSettings):
     max_wikitext_chars: int = 12000
     include_categories: list[str] = Field(default_factory=list)
     exclude_categories: list[str] = Field(default_factory=list)
+    # Skip ahead in the category's default sortkey order (which places
+    # digit/punctuation-titled pages before "A"). "" starts at the beginning.
+    category_start_prefix: str = ""
     # How many candidates to look ahead & rank before yielding `limit` (must be >= limit).
     candidate_pool_size: int = 30
 

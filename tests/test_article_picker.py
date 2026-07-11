@@ -335,6 +335,42 @@ def test_fetch_candidates_pool_preserves_order(mock_site):
     assert titles == ["Article 0", "Article 1", "Article 2"]
 
 
+def test_fetch_candidates_sets_start_sortkey_prefix(mock_site, restore_config):
+    """category_start_prefix threads into the mwclient category as
+    gcmstartsortkeyprefix, so scanning skips ahead of the default sortkey order
+    (which lists digit/punctuation-titled pages before "A")."""
+    config = get_config()
+    config.article_selection.category_start_prefix = "A"
+    set_config(config)
+
+    picker = ArticlePicker(site=mock_site)
+    cat_page = Mock()
+    cat_page.args = {}
+    cat_page.__iter__ = Mock(return_value=iter([]))
+    mock_site.pages = {"Category:All_articles_with_unsourced_statements": cat_page}
+
+    list(picker.fetch_candidates(limit=3))
+
+    assert cat_page.args["gcmstartsortkeyprefix"] == "A"
+
+
+def test_fetch_candidates_no_start_prefix_leaves_args_untouched(mock_site, restore_config):
+    """An empty category_start_prefix (the default) must not touch cat_page.args."""
+    config = get_config()
+    config.article_selection.category_start_prefix = ""
+    set_config(config)
+
+    picker = ArticlePicker(site=mock_site)
+    cat_page = Mock()
+    cat_page.args = {}
+    cat_page.__iter__ = Mock(return_value=iter([]))
+    mock_site.pages = {"Category:All_articles_with_unsourced_statements": cat_page}
+
+    list(picker.fetch_candidates(limit=3))
+
+    assert "gcmstartsortkeyprefix" not in cat_page.args
+
+
 @pytest.fixture
 def restore_config():
     """Config is global (get_config/set_config); restore it after tests that override it."""

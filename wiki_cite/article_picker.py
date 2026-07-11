@@ -442,6 +442,10 @@ class ArticlePicker:
             logger.warning("Error accessing category %r: %s", category, e)
             return
 
+        start_prefix = self.config.article_selection.category_start_prefix
+        if start_prefix and hasattr(cat_page, "args"):
+            cat_page.args["gcmstartsortkeyprefix"] = start_prefix
+
         pool_size = max(self.config.article_selection.candidate_pool_size, limit)
         pool: list[CandidateArticle] = []
         batch: list = []
