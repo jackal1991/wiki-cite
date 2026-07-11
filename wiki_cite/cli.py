@@ -98,7 +98,10 @@ def cmd_web(args):
     print("Press Ctrl+C to stop.")
 
     app = create_app()
-    app.run(debug=args.debug, host=args.host, port=args.port)  # pylint: disable=no-member
+    # threaded=True: without it, Werkzeug's dev server handles one request at a
+    # time, so a single slow request (e.g. one stuck in a Claude/search-API call
+    # inside the SSE fetch stream) blocks every other request, including new ones.
+    app.run(debug=args.debug, host=args.host, port=args.port, threaded=True)  # pylint: disable=no-member
 
 
 def cmd_config(args):
