@@ -1,12 +1,13 @@
 """Tests for article picker."""
 
+import logging
 import random
 import sqlite3
 
 import pytest
 from unittest.mock import Mock
 
-from wiki_cite.article_picker import ArticlePicker, CandidateScorer, _build_session, build_focused_excerpt
+from wiki_cite.article_picker import ArticlePicker, CandidateScorer, _build_session, build_focused_excerpt, crawl_subcategories
 from wiki_cite.config import Config, get_config, set_config
 from wiki_cite.models import CandidateArticle
 from wiki_cite.seen_store import SeenStore
@@ -534,3 +535,105 @@ def test_is_protected_without_protection(picker):
 
     is_protected = picker.is_protected(page)
     assert is_protected is False
+
+
+class _FakeMember:
+    """Stand-in for an mwclient member Page: only `.name` is used by crawl_subcategories."""
+
+    def __init__(self, name: str):
+        self.name = name
+
+
+class _FakeCategoryPage:
+    """Stand-in for an mwclient Category: `.members(namespace=14)` returns subcategories."""
+
+    def __init__(self, children: list[str] | Exception):
+        self._children = children
+
+    def members(self, namespace=None, **kwargs):
+        if isinstance(self._children, Exception):
+            raise self._children
+        return [_FakeMember(f"Category:{child}") for child in self._children]
+
+
+def _make_crawl_site(tree: dict[str, list[str] | Exception]):
+    """Build a fake mwclient Site whose `.pages["Category:X"]` looks up `tree[X]`."""
+    site = Mock()
+    site.pages = {f"Category:{name}": _FakeCategoryPage(children) for name, children in tree.items()}
+    return site
+
+
+def test_crawl_subcategories_shallow_tree():
+    """AC1.1: a shallow tree returns all reachable subcategory names plus the root."""
+    tree = {
+        "Root": ["Child A", "Child B"],
+        "Child A": ["Grandchild"],
+        "Child B": [],
+        "Grandchild": [],
+    }
+    site = _make_crawl_site(tree)
+
+    result = crawl_subcategories(site, "Category:Root")
+
+    assert result == sorted(["Root", "Child A", "Child B", "Grandchild"])
+
+
+def test_crawl_subcategories_degrades_on_branch_failure(caplog):
+    """AC1.2: a branch whose `.members()` raises is logged and skipped, but the
+    crawl still returns the other branches instead of aborting."""
+    tree = {
+        "Root": ["Good Branch", "Bad Branch"],
+        "Good Branch": ["Leaf"],
+        "Bad Branch": RuntimeError("API error"),
+        "Leaf": [],
+    }
+    site = _make_crawl_site(tree)
+
+    with caplog.at_level(logging.WARNING):
+        result = crawl_subcategories(site, "Root")
+
+    assert result == sorted(["Root", "Good Branch", "Bad Branch", "Leaf"])
+    assert any("Bad Branch" in record.message for record in caplog.records)
+
+
+def test_crawl_subcategories_handles_cycles_and_diamonds():
+    """AC1.3: a category reachable via two parents (diamond) or pointing back at an
+    ancestor (cycle) terminates and yields each name exactly once."""
+    tree = {
+        "Root": ["Branch A", "Branch B"],
+        "Branch A": ["Shared", "Root"],  # cycle back to Root
+        "Branch B": ["Shared"],  # diamond: Shared reachable via A and B
+        "Shared": ["Root"],  # cycle back to Root again
+    }
+    site = _make_crawl_site(tree)
+
+    result = crawl_subcategories(site, "Root")
+
+    assert result == sorted(["Root", "Branch A", "Branch B", "Shared"])
+    assert len(result) == len(set(result))
+
+
+def test_crawl_subcategories_respects_max_depth():
+    """max_depth caps the BFS: nodes at the cap are included but not expanded."""
+    tree = {
+        "Root": ["Child"],
+        "Child": ["Grandchild"],
+        "Grandchild": [],
+    }
+    site = _make_crawl_site(tree)
+
+    result = crawl_subcategories(site, "Root", max_depth=1)
+
+    assert result == sorted(["Root", "Child"])
+
+
+def test_crawl_subcategories_strips_category_prefix():
+    """Returned names never carry the `Category:` prefix, root included, regardless
+    of whether the caller passed the prefix in."""
+    tree = {"Root": ["Child"], "Child": []}
+    site = _make_crawl_site(tree)
+
+    result = crawl_subcategories(site, "Category:Root")
+
+    assert result == ["Child", "Root"]
+    assert all(not name.startswith("Category:") for name in result)

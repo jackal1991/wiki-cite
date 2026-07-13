@@ -6,6 +6,7 @@ import logging
 import random
 import re
 import sqlite3
+from collections import deque
 from datetime import datetime
 from collections.abc import Iterator
 
@@ -39,6 +40,63 @@ def _build_session(user_agent: str) -> requests.Session:
     session.mount("https://", adapter)
     session.mount("http://", adapter)
     return session
+
+def crawl_subcategories(
+    site,
+    root: str,
+    max_depth: int | None = None,
+) -> list[str]:
+    """Breadth-first walk of the subcategory tree under ``root``.
+
+    Sequential — one Wikipedia request in flight at a time, per API:Etiquette — and
+    cycle-safe: MediaWiki categories form a graph (a subcategory can loop back to an
+    ancestor), so a ``visited`` set guarantees termination and that each category is
+    fetched at most once.
+
+    Args:
+        site: an mwclient Site (``ArticlePicker.site``); ``site.pages[...]`` yields a
+            Category with ``.members(namespace=14)``.
+        root: root category name, with or without the ``Category:`` prefix.
+        max_depth: optional BFS depth cap (root is depth 0). ``None`` = unbounded
+            (still terminates via the visited set).
+
+    Returns:
+        A sorted, de-duplicated list of discovered category names, WITHOUT the
+        ``Category:`` prefix, INCLUDING the root itself. No relevance judgment is
+        applied here — that is the classification stage's job.
+    """
+    root_name = root.split(":", 1)[-1] if root.lower().startswith("category:") else root
+
+    results: list[str] = []
+    visited: set[str] = set()
+    queue: deque[tuple[str, int]] = deque([(root_name, 0)])
+
+    while queue:
+        name, depth = queue.popleft()
+        key = name.replace("_", " ").strip().casefold()
+        if key in visited:
+            continue
+        visited.add(key)
+        results.append(name)
+
+        if max_depth is not None and depth >= max_depth:
+            continue
+
+        try:
+            cat_page = site.pages[f"Category:{name}"]
+            members = list(cat_page.members(namespace=14))
+        except Exception as e:
+            logger.warning("Skipping subcategory branch %r: %s", name, e)
+            continue
+
+        for member in members:
+            child_name = member.name.split(":", 1)[-1] if member.name.lower().startswith("category:") else member.name
+            child_key = child_name.replace("_", " ").strip().casefold()
+            if child_key not in visited:
+                queue.append((child_name, depth + 1))
+
+    return sorted(results)
+
 
 # Matches inline {{Citation needed}} tags and its common redirects ({{cn}}, {{fact}}).
 # These are the signal Citation Hunt surfaces: a specific claim needing a source.
