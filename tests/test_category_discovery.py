@@ -4,7 +4,15 @@ import json
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-from wiki_cite.category_discovery import _classify_batch, _parse_keep_map, classify_categories
+import wiki_cite.category_discovery as category_discovery
+from wiki_cite.category_discovery import (
+    _classify_batch,
+    _parse_keep_map,
+    classify_categories,
+    expansion_file_path,
+    slugify_root,
+    write_expansion_file,
+)
 
 
 def _text_block(text: str):
@@ -130,3 +138,69 @@ def test_classify_categories_builds_client_from_config_when_none_given():
 
         mock_anthropic.assert_called_once()
         assert result == ["Foo"]
+
+
+def test_slugify_root_strips_prefix_and_normalizes():
+    assert slugify_root("Category:American Politicians") == "american-politicians"
+    assert slugify_root("American Politicians") == "american-politicians"
+    assert slugify_root("American_Politicians") == "american-politicians"
+
+
+def test_slugify_root_drops_non_alnum_hyphen_chars():
+    assert slugify_root("Category:20th-century (U.S.) politicians!") == "20th-century-us-politicians"
+
+
+def test_expansion_file_path_uses_slug(tmp_path, monkeypatch):
+    monkeypatch.setattr(category_discovery, "EXPANSIONS_DIR", tmp_path)
+    assert expansion_file_path("Category:Foo Bar") == tmp_path / "foo-bar.json"
+
+
+def test_write_expansion_file_includes_root_sorted_deduplicated(tmp_path, monkeypatch):
+    """AC3.1: root is always included even if not in the classified list; output is
+    sorted and deduplicated."""
+    monkeypatch.setattr(category_discovery, "EXPANSIONS_DIR", tmp_path)
+
+    path = write_expansion_file("Category:Root Topic", ["Zeta", "Alpha", "Alpha"], max_depth=2)
+
+    assert path == tmp_path / "root-topic.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    assert data["root"] == "Root Topic"
+    assert data["max_depth"] == 2
+    assert data["categories"] == ["Alpha", "Root Topic", "Zeta"]
+    assert "generated_at" in data
+
+
+def test_write_expansion_file_deterministic_except_timestamp(tmp_path, monkeypatch):
+    """AC3.2: given fixed inputs, two writes produce identical content except generated_at."""
+    monkeypatch.setattr(category_discovery, "EXPANSIONS_DIR", tmp_path)
+
+    path1 = write_expansion_file("Root", ["B", "A"], max_depth=None)
+    data1 = json.loads(path1.read_text(encoding="utf-8"))
+
+    path2 = write_expansion_file("Root", ["B", "A"], max_depth=None)
+    data2 = json.loads(path2.read_text(encoding="utf-8"))
+
+    assert path1 == path2
+    assert {k: v for k, v in data1.items() if k != "generated_at"} == {k: v for k, v in data2.items() if k != "generated_at"}
+
+
+def test_write_expansion_file_overwrites_wholesale(tmp_path, monkeypatch):
+    """AC3.2: a second write with different categories replaces the file content
+    entirely rather than merging with the first write's categories."""
+    monkeypatch.setattr(category_discovery, "EXPANSIONS_DIR", tmp_path)
+
+    write_expansion_file("Root", ["Old One", "Old Two"], max_depth=None)
+    path = write_expansion_file("Root", ["New One"], max_depth=None)
+
+    data = json.loads(path.read_text(encoding="utf-8"))
+    assert data["categories"] == ["New One", "Root"]
+    assert "Old One" not in data["categories"]
+
+
+def test_write_expansion_file_creates_directory(tmp_path, monkeypatch):
+    nested = tmp_path / "nested" / "expansions"
+    monkeypatch.setattr(category_discovery, "EXPANSIONS_DIR", nested)
+
+    path = write_expansion_file("Root", [], max_depth=None)
+
+    assert path.exists()

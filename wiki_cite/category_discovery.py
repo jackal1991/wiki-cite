@@ -10,12 +10,16 @@ import concurrent.futures
 import json
 import logging
 import re
+from datetime import datetime, timezone
+from pathlib import Path
 
 from anthropic import Anthropic
 
 from wiki_cite.config import get_config
 
 logger = logging.getLogger(__name__)
+
+EXPANSIONS_DIR = Path("data/category_expansions")
 
 CLASSIFY_SYSTEM_PROMPT = """You are classifying Wikipedia category names discovered by crawling the \
 subcategory tree under a topic root. For each category name, decide whether it is likely to contain \
@@ -125,3 +129,43 @@ def classify_categories(
                 logger.warning("Classification batch failed: %s", e)
 
     return sorted(accepted)
+
+
+def slugify_root(root: str) -> str:
+    """Filesystem slug for a root category name: strip a Category: prefix, casefold,
+    spaces/underscores -> hyphens, drop anything but [a-z0-9-]. Deterministic."""
+    name = root.split(":", 1)[-1] if root.lower().startswith("category:") else root
+    slug = re.sub(r"[_\s]+", "-", name.strip().casefold())
+    slug = re.sub(r"[^a-z0-9-]", "", slug)
+    return slug
+
+
+def expansion_file_path(root: str) -> Path:
+    """Path to the static expansion file for ``root`` (used by both writer and loader)."""
+    return EXPANSIONS_DIR / f"{slugify_root(root)}.json"
+
+
+def write_expansion_file(root: str, categories: list[str], *, max_depth: int | None) -> Path:
+    """Write the deterministic, sorted, deduplicated expansion file and return its path.
+
+    Overwrites the file wholesale — never appends/merges — so a fixed crawl+classification
+    result produces identical file content run-to-run except ``generated_at``.
+    """
+    root_name = root.split(":", 1)[-1] if root.lower().startswith("category:") else root
+
+    EXPANSIONS_DIR.mkdir(parents=True, exist_ok=True)
+
+    accepted = sorted(set(categories) | {root_name})
+    data = {
+        "root": root_name,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "max_depth": max_depth,
+        "categories": accepted,
+    }
+
+    path = expansion_file_path(root)
+    with path.open("w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False, sort_keys=True)
+        f.write("\n")
+
+    return path
