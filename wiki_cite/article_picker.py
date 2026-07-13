@@ -16,6 +16,7 @@ from requests.adapters import HTTPAdapter
 from urllib3.util import Retry
 import mwparserfromhell
 
+from wiki_cite.category_discovery import load_expansion
 from wiki_cite.config import get_config
 from wiki_cite.models import CandidateArticle
 
@@ -350,6 +351,21 @@ class ArticlePicker:
         return name.split(":", 1)[-1].replace("_", " ").strip().casefold()
 
     @staticmethod
+    def _expand_categories(names: list[str]) -> list[str]:
+        """For each configured category name, if a discovery file exists for it, replace it
+        with that file's discovered set (root + accepted subcats); otherwise keep the name
+        as-is (AC4.2 fallback). Returns a deduplicated, order-stable list."""
+        expanded: list[str] = []
+        seen: set[str] = set()
+        for name in names:
+            discovered = load_expansion(name)
+            for candidate in discovered if discovered is not None else [name]:
+                if candidate not in seen:
+                    seen.add(candidate)
+                    expanded.append(candidate)
+        return expanded
+
+    @staticmethod
     def category_filter(
         categories: list[str],
         include: list[str],
@@ -524,6 +540,14 @@ class ArticlePicker:
         if start_prefix and hasattr(cat_page, "args"):
             cat_page.args["gcmstartsortkeyprefix"] = start_prefix
 
+        # Resolve and expand the include/exclude lists once per fetch (not once per page):
+        # each configured name that has a static discovery file is widened to its
+        # discovered subcategory set (no live Wikipedia subcategory call here — Phase 4).
+        include = include_categories if include_categories is not None else self.config.article_selection.include_categories
+        exclude = exclude_categories if exclude_categories is not None else self.config.article_selection.exclude_categories
+        include = self._expand_categories(include)
+        exclude = self._expand_categories(exclude)
+
         pool_size = max(self.config.article_selection.candidate_pool_size, limit)
         pool: list[CandidateArticle] = []
         # Sequential, one request in flight at a time — per mediawiki.org/wiki/API:Etiquette,
@@ -538,7 +562,7 @@ class ArticlePicker:
             if self.seen_store is not None and self.seen_store.is_seen(page.name):
                 continue
 
-            is_ok, _, page_text, categories = self._evaluate_candidate(page, include_categories, exclude_categories)
+            is_ok, _, page_text, categories = self._evaluate_candidate(page, include, exclude)
             if not is_ok:
                 continue
 

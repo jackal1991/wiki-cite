@@ -169,3 +169,20 @@ def write_expansion_file(root: str, categories: list[str], *, max_depth: int | N
         f.write("\n")
 
     return path
+
+
+def load_expansion(name: str) -> list[str] | None:
+    """Return the discovered category-name list for a root ``name`` if an expansion file
+    exists (data/category_expansions/<slug>.json), else None. Pure read; no network.
+    Malformed/unreadable file -> log a warning and return None (fall back to direct match)."""
+    path = expansion_file_path(name)
+    if not path.exists():
+        return None
+
+    try:
+        with path.open("r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data["categories"]
+    except (OSError, json.JSONDecodeError, KeyError) as e:
+        logger.warning("Ignoring unreadable expansion file %s: %s", path, e)
+        return None

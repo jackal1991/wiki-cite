@@ -1,6 +1,7 @@
 """Tests for Anthropic-facing category relevance classification."""
 
 import json
+import logging
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
@@ -10,6 +11,7 @@ from wiki_cite.category_discovery import (
     _parse_keep_map,
     classify_categories,
     expansion_file_path,
+    load_expansion,
     slugify_root,
     write_expansion_file,
 )
@@ -204,3 +206,38 @@ def test_write_expansion_file_creates_directory(tmp_path, monkeypatch):
     path = write_expansion_file("Root", [], max_depth=None)
 
     assert path.exists()
+
+
+def test_load_expansion_returns_categories_when_file_exists(tmp_path, monkeypatch):
+    monkeypatch.setattr(category_discovery, "EXPANSIONS_DIR", tmp_path)
+    write_expansion_file("Root Topic", ["Sub A", "Sub B"], max_depth=1)
+
+    result = load_expansion("Root Topic")
+
+    assert result == ["Root Topic", "Sub A", "Sub B"]
+
+
+def test_load_expansion_returns_none_when_file_absent(tmp_path, monkeypatch):
+    monkeypatch.setattr(category_discovery, "EXPANSIONS_DIR", tmp_path)
+
+    assert load_expansion("Nonexistent Root") is None
+
+
+def test_load_expansion_returns_none_and_warns_on_malformed_json(tmp_path, monkeypatch, caplog):
+    monkeypatch.setattr(category_discovery, "EXPANSIONS_DIR", tmp_path)
+    path = expansion_file_path("Broken Root")
+    path.write_text("not valid json{{{", encoding="utf-8")
+
+    with caplog.at_level(logging.WARNING):
+        result = load_expansion("Broken Root")
+
+    assert result is None
+    assert any("Broken Root" in record.message or str(path) in record.message for record in caplog.records)
+
+
+def test_load_expansion_returns_none_when_categories_key_missing(tmp_path, monkeypatch):
+    monkeypatch.setattr(category_discovery, "EXPANSIONS_DIR", tmp_path)
+    path = expansion_file_path("Incomplete Root")
+    path.write_text(json.dumps({"root": "Incomplete Root"}), encoding="utf-8")
+
+    assert load_expansion("Incomplete Root") is None

@@ -5,7 +5,7 @@ import random
 import sqlite3
 
 import pytest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from wiki_cite.article_picker import ArticlePicker, CandidateScorer, _build_session, build_focused_excerpt, crawl_subcategories
 from wiki_cite.config import Config, get_config, set_config
@@ -261,6 +261,102 @@ def test_fetch_candidates_passes_category_overrides(mock_site):
     titles = [c.title for c in picker.fetch_candidates(limit=5, exclude_categories=["Sports"])]
     assert "Excluded Article" not in titles
     assert "Included Article" in titles
+
+
+def test_expand_categories_replaces_name_with_discovery_file(monkeypatch):
+    """A configured name with a discovery file is replaced with that file's discovered set."""
+    monkeypatch.setattr(
+        "wiki_cite.article_picker.load_expansion",
+        lambda name: ["American Politicians", "American Politician Stubs"] if name == "American Politicians" else None,
+    )
+
+    result = ArticlePicker._expand_categories(["American Politicians"])
+
+    assert result == ["American Politicians", "American Politician Stubs"]
+
+
+def test_expand_categories_keeps_name_when_no_discovery_file(monkeypatch):
+    """AC4.2: a name with no discovery file stays a single-name direct-match entry."""
+    monkeypatch.setattr("wiki_cite.article_picker.load_expansion", lambda name: None)
+
+    result = ArticlePicker._expand_categories(["Sports", "History"])
+
+    assert result == ["Sports", "History"]
+
+
+def test_expand_categories_dedupes_preserving_order(monkeypatch):
+    monkeypatch.setattr(
+        "wiki_cite.article_picker.load_expansion",
+        lambda name: ["Shared", "A Only"] if name == "A" else ["Shared", "B Only"] if name == "B" else None,
+    )
+
+    result = ArticlePicker._expand_categories(["A", "B"])
+
+    assert result == ["Shared", "A Only", "B Only"]
+
+
+def test_fetch_candidates_expands_include_category_via_discovery_file(mock_site):
+    """AC4.1: with an expansion file present for the configured include category, an
+    article whose category is a *discovered subcategory* (not the root) passes the filter."""
+    picker = ArticlePicker(site=mock_site)
+
+    subcat = Mock()
+    subcat.name = "Category:American Politician Stubs"
+    matching_page = Mock()
+    matching_page.name = "Subcat Article"
+    matching_page.redirect = False
+    matching_page.namespace = 0
+    matching_page.protection = {}
+    matching_page.revision = "1"
+    matching_page.text = Mock(return_value="A fresh and notable claim about the subject.{{Citation needed}}")
+    matching_page.categories = Mock(return_value=[subcat])
+
+    mock_site.pages = {"Category:All_articles_with_unsourced_statements": [matching_page]}
+
+    with patch(
+        "wiki_cite.article_picker.load_expansion",
+        side_effect=lambda name: ["American Politicians", "American Politician Stubs"] if name == "American Politicians" else None,
+    ):
+        titles = [c.title for c in picker.fetch_candidates(limit=5, include_categories=["American Politicians"])]
+
+    assert "Subcat Article" in titles
+
+
+def test_fetch_candidates_no_discovery_file_is_direct_match_only(mock_site):
+    """AC4.2: with no file for the configured include category, filtering is
+    direct-match-only — the root itself passes, an unrelated subcategory does not — and
+    nothing raises."""
+    picker = ArticlePicker(site=mock_site)
+
+    root_cat = Mock()
+    root_cat.name = "Category:American Politicians"
+    root_page = Mock()
+    root_page.name = "Root Article"
+    root_page.redirect = False
+    root_page.namespace = 0
+    root_page.protection = {}
+    root_page.revision = "1"
+    root_page.text = Mock(return_value="A fresh and notable claim about the subject.{{Citation needed}}")
+    root_page.categories = Mock(return_value=[root_cat])
+
+    subcat = Mock()
+    subcat.name = "Category:Some Undiscovered Subcat"
+    subcat_page = Mock()
+    subcat_page.name = "Subcat Article"
+    subcat_page.redirect = False
+    subcat_page.namespace = 0
+    subcat_page.protection = {}
+    subcat_page.revision = "2"
+    subcat_page.text = Mock(return_value="A fresh and notable claim about the subject.{{Citation needed}}")
+    subcat_page.categories = Mock(return_value=[subcat])
+
+    mock_site.pages = {"Category:All_articles_with_unsourced_statements": [root_page, subcat_page]}
+
+    with patch("wiki_cite.article_picker.load_expansion", return_value=None):
+        titles = [c.title for c in picker.fetch_candidates(limit=5, include_categories=["American Politicians"])]
+
+    assert "Root Article" in titles
+    assert "Subcat Article" not in titles
 
 
 def test_category_filter_include_only_overlap_passes():
