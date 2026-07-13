@@ -62,13 +62,22 @@ def test_parse_keep_map_malformed_json_returns_empty():
 
 
 def test_classify_batch_keeps_content_and_drops_maintenance():
-    """AC2.1: maintenance-style names are dropped, topical/stub names are kept."""
-    names = ["20th-century American politicians", "American politician stubs", "American politics task force"]
+    """AC2.1: maintenance-style names (task force, quality/importance assessment,
+    WikiProject participants) are dropped; topical and `...stubs` names are kept."""
+    names = [
+        "20th-century American politicians",
+        "American politician stubs",
+        "American politics task force",
+        "American politics articles by quality",
+        "WikiProject Biography participants",
+    ]
     payload = json.dumps(
         {
             "20th-century American politicians": True,
             "American politician stubs": True,
             "American politics task force": False,
+            "American politics articles by quality": False,
+            "WikiProject Biography participants": False,
         }
     )
     client = _client_returning(payload)
