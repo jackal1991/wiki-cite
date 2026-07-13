@@ -359,6 +359,36 @@ def test_fetch_candidates_no_discovery_file_is_direct_match_only(mock_site):
     assert "Subcat Article" not in titles
 
 
+def test_fetch_candidates_blp_relaxation_flag_has_zero_effect_with_no_include_filter(mock_site):
+    """AC5.2, exercised through the real fetch_candidates request path (not just
+    is_candidate): with relax_blp_when_topic_filtered=True but no include_categories
+    configured (the default no-topic-filter case), a BLP article is still excluded —
+    the flag must have zero effect when there's no active include filter to scope it to."""
+    picker = ArticlePicker(site=mock_site)
+    picker.config.guardrails.relax_blp_when_topic_filtered = True
+    try:
+        blp_category = Mock()
+        blp_category.name = "Category:Living people"
+        blp_page = Mock()
+        blp_page.name = "Living Person Article"
+        blp_page.redirect = False
+        blp_page.namespace = 0
+        blp_page.protection = {}
+        blp_page.revision = "1"
+        blp_page.text = Mock(return_value="The politician was elected in 1990.{{Citation needed}}")
+        blp_page.categories = Mock(return_value=[blp_category])
+
+        mock_site.pages = {"Category:All_articles_with_unsourced_statements": [blp_page]}
+
+        # No include_categories override, and config.article_selection.include_categories
+        # defaults to [] — i.e. no topic filter active at all.
+        titles = [c.title for c in picker.fetch_candidates(limit=5)]
+
+        assert "Living Person Article" not in titles
+    finally:
+        picker.config.guardrails.relax_blp_when_topic_filtered = False
+
+
 def test_category_filter_include_only_overlap_passes():
     """Include-only, article overlaps -> passes."""
     ok, reason = ArticlePicker.category_filter(["History"], ["History"], [])
@@ -419,6 +449,59 @@ def test_is_candidate_rejects_excluded_category_even_with_citation_needed(picker
         assert "excluded category" in reason
     finally:
         picker.config.article_selection.exclude_categories = []
+
+
+def _make_blp_page():
+    page = Mock()
+    page.redirect = False
+    page.namespace = 0
+    page.protection = {}
+    page.text = Mock(return_value="The politician was elected in 1990.{{Citation needed}}")
+    category = Mock()
+    category.name = "Category:Living people"
+    page.categories = Mock(return_value=[category])
+    return page
+
+
+def test_is_candidate_blp_relaxed_with_active_include_filter_is_accepted(picker):
+    """AC5.1: flag True + non-empty include list + BLP article -> accepted (BLP check skipped)."""
+    picker.config.guardrails.relax_blp_when_topic_filtered = True
+    try:
+        is_candidate, reason = picker.is_candidate(_make_blp_page(), include_categories=["Living people"])
+        assert is_candidate is True
+        assert reason == ""
+    finally:
+        picker.config.guardrails.relax_blp_when_topic_filtered = False
+
+
+def test_is_candidate_blp_relaxed_without_include_filter_still_rejects(picker):
+    """AC5.2: flag True + empty include list + BLP article -> rejected as "BLP article".
+    The flag must never silently disable BLP exclusion repo-wide."""
+    picker.config.guardrails.relax_blp_when_topic_filtered = True
+    try:
+        is_candidate, reason = picker.is_candidate(_make_blp_page(), include_categories=[])
+        assert is_candidate is False
+        assert reason == "BLP article"
+    finally:
+        picker.config.guardrails.relax_blp_when_topic_filtered = False
+
+
+def test_is_candidate_blp_default_flag_rejects_with_include_filter(picker):
+    """AC5.3: flag False (default) + BLP article -> rejected, identical to current
+    behavior, even when an include filter is active."""
+    assert picker.config.guardrails.relax_blp_when_topic_filtered is False
+    is_candidate, reason = picker.is_candidate(_make_blp_page(), include_categories=["Living people"])
+    assert is_candidate is False
+    assert reason == "BLP article"
+
+
+def test_is_candidate_blp_default_flag_rejects_without_include_filter(picker):
+    """AC5.3: flag False (default) + BLP article -> rejected, identical to current
+    behavior, with no include filter active."""
+    assert picker.config.guardrails.relax_blp_when_topic_filtered is False
+    is_candidate, reason = picker.is_candidate(_make_blp_page(), include_categories=[])
+    assert is_candidate is False
+    assert reason == "BLP article"
 
 
 def _make_candidate_page(name, revision="1"):

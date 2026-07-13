@@ -451,8 +451,12 @@ class ArticlePicker:
         if not ok:
             return False, reason, page_text, categories
 
-        # Check if BLP
-        if self.config.article_selection.exclude_blp and self.is_blp(page_text, categories):
+        # BLP is excluded by default. A deliberately-scoped topic filter may opt out via
+        # guardrails.relax_blp_when_topic_filtered — but ONLY when an include filter is
+        # actually active, so the flag can never silently disable BLP exclusion repo-wide.
+        include_filter_active = bool(include)
+        blp_relaxed = self.config.guardrails.relax_blp_when_topic_filtered and include_filter_active
+        if self.config.article_selection.exclude_blp and not blp_relaxed and self.is_blp(page_text, categories):
             return False, "BLP article", page_text, categories
 
         # Require at least one inline {{Citation needed}} claim to source.

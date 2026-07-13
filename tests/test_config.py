@@ -32,6 +32,7 @@ def test_guardrails_config_defaults():
     assert config.max_content_removal_pct == 20
     assert config.min_similarity_ratio == 0.85
     assert config.skip_blp_articles is True
+    assert config.relax_blp_when_topic_filtered is False
 
 
 def test_wikipedia_config_defaults():
@@ -118,6 +119,24 @@ feedback:
             assert config.feedback.enabled is False
             assert config.feedback.epsilon == 0.3
             assert config.feedback.min_samples == 10
+        finally:
+            Path(f.name).unlink()
+
+
+def test_config_load_relax_blp_when_topic_filtered_from_yaml():
+    """The guardrails: block forwards relax_blp_when_topic_filtered like any other flag."""
+    yaml_content = """
+guardrails:
+  relax_blp_when_topic_filtered: true
+"""
+
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+        f.write(yaml_content)
+        f.flush()
+
+        try:
+            config = Config.load(f.name)
+            assert config.guardrails.relax_blp_when_topic_filtered is True
         finally:
             Path(f.name).unlink()
 

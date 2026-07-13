@@ -33,6 +33,10 @@ class GuardrailsConfig(BaseSettings):
     max_content_removal_pct: int = 20
     min_similarity_ratio: float = 0.85
     skip_blp_articles: bool = True
+    # Opt-in, topic-scoped carve-out: when True AND an include_categories filter is active,
+    # skip the always-on BLP exclusion. Off by default — WP:BLP is Wikipedia's strictest
+    # sourcing-policy area, so this only ever relaxes within a deliberately narrowed topic.
+    relax_blp_when_topic_filtered: bool = False
 
 
 class SourcesConfig(BaseSettings):
