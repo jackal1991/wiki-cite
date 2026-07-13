@@ -3,6 +3,7 @@ Command-line interface for the Wikipedia Citation & Cleanup Tool.
 """
 
 import argparse
+import json
 import logging
 import sys
 from logging.handlers import RotatingFileHandler
@@ -136,8 +137,6 @@ def cmd_config(args):
 
 def cmd_discover_categories(args):
     """Crawl a category's subcategory tree and write a static expansion file."""
-    import json
-
     picker = ArticlePicker()
 
     print(f"Crawling subcategories under {args.root!r}...")

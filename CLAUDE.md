@@ -1,6 +1,6 @@
 # wiki-cite
 
-Last verified: 2026-07-08
+Last verified: 2026-07-13
 
 Wikipedia citation & cleanup tool: a Flask review dashboard plus a Claude agent that
 proposes **minimal, sourced** edits to stub articles. The agent finds reliable sources for
@@ -32,18 +32,24 @@ before it can be pushed to Wikipedia.
 - `wiki_cite/` - The package
   - `agent.py` - Claude agent: agentic tool-use loop that sources claims and proposes edits
   - `source_finder.py` - Source search across Semantic Scholar / CrossRef / Brave; reliability checks
-  - `article_picker.py` - Selects candidate stub articles lacking sources
+  - `article_picker.py` - Selects candidate stub articles lacking sources; also crawls a
+    category's subcategory tree (`crawl_subcategories`)
+  - `category_discovery.py` - Anthropic-facing subcategory relevance classification
+    (content vs. Wikipedia-maintenance categories) + expansion-file read/write I/O
   - `guardrails.py` - Enforces minimal-edit / policy constraints on proposed edits
   - `models.py` - Pydantic v2 domain models (`ProposedEdit`, etc.)
   - `config.py` - Loads `config.yaml` + env (pydantic-settings)
   - `seen_store.py` - Persisted store of already-seen articles (idempotent fetch)
   - `web_app.py` + `templates/` - Flask review dashboard and SSE activity stream
   - `wikipedia_push.py` - Pushes approved, human-reviewed edits to Wikipedia
-  - `cli.py` - Entry point (`wiki-cite` script)
+  - `cli.py` - Entry point (`wiki-cite` script); includes `discover-categories`, which
+    crawls + classifies a root category's subcategory tree into a static expansion file
 - `tests/` - pytest suite (mirrors module names: `test_<module>.py`)
 - `docs/design-plans/` - Design docs written before implementation (`<date>-<issue#>-<slug>.md`)
 - `docs/issues/` - Jackal issue docs (backlog work units)
 - `docs/impl-plans/` - Jackal implementation plans
+- `data/category_expansions/` - Generated-but-versioned `<root-slug>.json` files written by
+  `wiki-cite discover-categories`; read at runtime by `article_picker`'s topic filter
 - `examples/` - Standalone usage examples
 - `config.yaml` - Runtime behavior (model, guardrail thresholds, source APIs, article selection)
 - `.env` - Secrets (API keys); copy from `.env.example`. Never commit.

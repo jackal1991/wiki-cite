@@ -182,7 +182,10 @@ def load_expansion(name: str) -> list[str] | None:
     try:
         with path.open("r", encoding="utf-8") as f:
             data = json.load(f)
-        return data["categories"]
-    except (OSError, json.JSONDecodeError, KeyError) as e:
+        categories = data["categories"]
+        if not isinstance(categories, list) or not all(isinstance(c, str) for c in categories):
+            raise ValueError(f"'categories' must be a list of strings, got {categories!r}")
+        return categories
+    except (OSError, json.JSONDecodeError, KeyError, ValueError) as e:
         logger.warning("Ignoring unreadable expansion file %s: %s", path, e)
         return None

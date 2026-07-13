@@ -250,3 +250,25 @@ def test_load_expansion_returns_none_when_categories_key_missing(tmp_path, monke
     path.write_text(json.dumps({"root": "Incomplete Root"}), encoding="utf-8")
 
     assert load_expansion("Incomplete Root") is None
+
+
+def test_load_expansion_returns_none_when_categories_is_not_a_list_of_strings(tmp_path, monkeypatch, caplog):
+    """A hand-edited/corrupt file with e.g. 'categories': 'Foo' (a string, not a list)
+    must fail closed to None rather than let a caller iterate its characters."""
+    monkeypatch.setattr(category_discovery, "EXPANSIONS_DIR", tmp_path)
+    path = expansion_file_path("Bad Shape Root")
+    path.write_text(json.dumps({"root": "Bad Shape Root", "categories": "Foo"}), encoding="utf-8")
+
+    with caplog.at_level(logging.WARNING):
+        result = load_expansion("Bad Shape Root")
+
+    assert result is None
+    assert any("Bad Shape Root" in record.message or str(path) in record.message for record in caplog.records)
+
+
+def test_load_expansion_returns_none_when_categories_contains_non_strings(tmp_path, monkeypatch):
+    monkeypatch.setattr(category_discovery, "EXPANSIONS_DIR", tmp_path)
+    path = expansion_file_path("Mixed Types Root")
+    path.write_text(json.dumps({"root": "Mixed Types Root", "categories": ["Alpha", 123]}), encoding="utf-8")
+
+    assert load_expansion("Mixed Types Root") is None
