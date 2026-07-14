@@ -1,8 +1,14 @@
 # Issue #18 — Pre-filter off-topic candidates before per-page fetches in fetch_candidates()
 
-**Status:** Ready (design pending)
+**Status:** In Progress
 **Complexity:** Complex
 **GitHub:** https://github.com/jackal1991/wiki-cite/issues/18
+
+## Worktree
+
+- branch: feat/18-prefilter-offtopic-candidates
+- path: .worktrees/18-prefilter-offtopic-candidates
+- created: 2026-07-14
 
 ## Summary
 When a topic filter (`article_selection.include_categories`, from #10's subcategory
