@@ -106,6 +106,9 @@
                 <div class="eyebrow">Working</div>
                 <h1 id="working-title">Finding an article we can confidently source…</h1>
             </div>
+            <button type="button" class="btn-ghost is-on" id="auto-fill-stop-btn"
+                    style="display:none; margin-left:auto; flex-shrink:0;"
+                    onclick="setAutoFill(false)">Auto-fill: on — click to stop</button>
         </div>
         <p class="working-sub" id="working-sub">Watch below: the agent reads a short unsourced stub and proposes only minimal, sourced edits for claims already in the text.</p>
 
@@ -163,6 +166,11 @@
         btn.setAttribute('aria-pressed', on ? 'true' : 'false');
         btn.textContent = on ? 'Auto-fill: on' : 'Auto-fill: off';
         btn.classList.toggle('is-on', on);
+        // #auto-fill-btn lives in #queue-view, which is hidden for the whole
+        // duration of a fetch (see showWorkingView). Mirror the stop control into
+        // #working-view so the user has a visible, clickable way to stop the loop
+        // while a fetch is in flight, not just between fetches.
+        document.getElementById('auto-fill-stop-btn').style.display = on ? '' : 'none';
     }
 
     function toggleAutoFill() {
