@@ -1,8 +1,14 @@
 # Issue #12 — Queued review: stack up to 10 pending proposals instead of forcing single-proposal review
 
-**Status:** Ready
+**Status:** In Progress
 **Complexity:** Standard
 **GitHub:** https://github.com/jackal1991/wiki-cite/issues/12
+
+## Worktree
+
+- branch: feat/12-queued-review
+- path: .worktrees/12-queued-review
+- created: 2026-07-13
 
 ## Summary
 Currently, clicking "Fetch new article" and finding a candidate immediately force-navigates
