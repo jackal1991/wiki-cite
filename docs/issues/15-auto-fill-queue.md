@@ -1,8 +1,9 @@
 # Issue #15 — Auto-fill queue: keep fetching automatically until the 10-proposal cap
 
-**Status:** In Progress
+**Status:** In Review
 **Complexity:** Standard
 **GitHub:** https://github.com/jackal1991/wiki-cite/issues/15
+**PR:** https://github.com/jackal1991/wiki-cite/pull/17
 
 ## Worktree
 
