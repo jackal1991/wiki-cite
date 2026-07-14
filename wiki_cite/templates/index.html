@@ -47,6 +47,7 @@
     .btn-add-include:hover { background: #dcefe0; }
     .btn-add-exclude { color: #8a3b28; background: #fff; border: 1px solid #e6d3cc; }
     .btn-add-exclude:hover { background: #f6e6e0; }
+    #auto-fill-btn.is-on { color: #14432f; background: #dcefe0; border-color: #b9dcc3; }
 </style>
 {% endblock %}
 
@@ -58,6 +59,7 @@
         <p class="lead">Each proposal fixes grammar, adds wikilinks, and cites claims already present in a stub article. Nothing new is written. You review every change before it reaches Wikipedia.</p>
         <div style="margin-top:22px; display:flex; align-items:center; gap:16px; flex-wrap:wrap;">
             <button class="btn-primary" id="fetch-btn" onclick="fetchNewArticle()">Fetch new article</button>
+            <button type="button" class="btn-ghost" id="auto-fill-btn" aria-pressed="false" onclick="toggleAutoFill()">Auto-fill: off</button>
             <span style="font-size:13px; color:#656b5c;">Scans stubs lacking sources · skips living persons &amp; protected pages</span>
             <span id="fetch-cap-note" class="muted" style="font-size:13px; color:#8a3b28; display:none;"></span>
             <a href="/stats" class="btn-ghost" style="margin-left:auto;">View stats →</a>
@@ -104,6 +106,9 @@
                 <div class="eyebrow">Working</div>
                 <h1 id="working-title">Finding an article we can confidently source…</h1>
             </div>
+            <button type="button" class="btn-ghost is-on" id="auto-fill-stop-btn"
+                    style="display:none; margin-left:auto; flex-shrink:0;"
+                    onclick="setAutoFill(false)">Auto-fill: on — click to stop</button>
         </div>
         <p class="working-sub" id="working-sub">Watch below: the agent reads a short unsourced stub and proposes only minimal, sourced edits for claims already in the text.</p>
 
@@ -153,6 +158,39 @@
     const scan = { phase: 0, scanned: 0, skipped: 0, title: '', rev: '', model: '', category: '', apis: '', preview: [], sweeping: false };
     let agentLog = [];
     let evtSource = null;
+    let autoFillEnabled = false;
+
+    function setAutoFill(on) {
+        autoFillEnabled = on;
+        const btn = document.getElementById('auto-fill-btn');
+        btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+        btn.textContent = on ? 'Auto-fill: on' : 'Auto-fill: off';
+        btn.classList.toggle('is-on', on);
+        // #auto-fill-btn lives in #queue-view, which is hidden for the whole
+        // duration of a fetch (see showWorkingView). Mirror the stop control into
+        // #working-view so the user has a visible, clickable way to stop the loop
+        // while a fetch is in flight, not just between fetches.
+        document.getElementById('auto-fill-stop-btn').style.display = on ? '' : 'none';
+    }
+
+    function toggleAutoFill() {
+        if (autoFillEnabled) { setAutoFill(false); return; }
+        setAutoFill(true);
+        if (!evtSource) maybeAutoContinue();
+    }
+
+    async function maybeAutoContinue() {
+        if (!autoFillEnabled) return;
+        try {
+            const res = await fetch('/api/proposals/pending-count');
+            const { at_cap } = await res.json();
+            if (at_cap) { setAutoFill(false); return; }
+        } catch (err) {
+            setAutoFill(false);
+            return;
+        }
+        if (autoFillEnabled) fetchNewArticle();
+    }
 
     function escapeHtml(text) {
         const div = document.createElement('div');
@@ -346,18 +384,21 @@
                 renderViewport();
                 renderPipeline();
                 if (evtSource) { evtSource.close(); evtSource = null; }
-                setTimeout(() => { returnToQueue(); loadProposals(); }, 1100);
+                setTimeout(() => { returnToQueue(); loadProposals(); maybeAutoContinue(); }, 1100);
                 break;
             case 'failed': {
+                setAutoFill(false);
                 let message = evt.error || 'No article found';
                 if (evt.skipped && evt.skipped.length) message += ` (skipped: ${evt.skipped.join(', ')})`;
                 returnToQueue(message);
                 break;
             }
             case 'error':
+                setAutoFill(false);
                 returnToQueue('Error: ' + (evt.error || 'fetch failed'));
                 break;
             case 'queue_full':
+                setAutoFill(false);
                 returnToQueue(evt.error || 'Queue is full. Resolve some proposals before fetching more.');
                 break;
         }
@@ -385,7 +426,10 @@
         };
         evtSource.onerror = () => {
             // Stream closed unexpectedly (and not already finished/redirecting).
-            if (evtSource && scan.phase < DONE_PHASE) returnToQueue('Lost connection to the agent. Please try again.');
+            if (evtSource && scan.phase < DONE_PHASE) {
+                setAutoFill(false);
+                returnToQueue('Lost connection to the agent. Please try again.');
+            }
         };
     }
 
