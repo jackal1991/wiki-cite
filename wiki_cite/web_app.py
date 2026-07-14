@@ -20,6 +20,10 @@ from wiki_cite.source_finder import SourceFinder, extract_citation_url
 from wiki_cite.stats import STATS_DIMENSIONS
 from wiki_cite.wikipedia_push import WikipediaPushService
 
+# Maximum number of unresolved (status == "pending") proposals allowed in the
+# queue at once. Fetching a new article is refused while the queue is at this cap.
+MAX_PENDING_PROPOSALS = 10
+
 
 def create_app() -> Flask:
     """Create and configure the Flask application."""
@@ -32,6 +36,11 @@ def create_app() -> Flask:
     # In-memory storage for proposals (in production, use a database)
     proposals: dict[str, EditProposal] = {}
     app.proposals = proposals  # test-only seam for seeding proposals directly
+
+    def pending_proposal_count() -> int:
+        """Count unresolved proposals (status == 'pending'). Pushed/rejected proposals
+        do not occupy a queue slot. Counts proposals, not edits."""
+        return sum(1 for p in proposals.values() if p.status == "pending")
 
     # In-memory include/exclude category override, seeded from config.yaml. Mutating
     # this never touches config.yaml, so it resets to the config defaults on restart.
@@ -65,6 +74,14 @@ def create_app() -> Flask:
         skipped: list[str] = []
 
         try:
+            if pending_proposal_count() >= MAX_PENDING_PROPOSALS:
+                yield {
+                    "type": "queue_full",
+                    "error": f"Queue is full — {MAX_PENDING_PROPOSALS} pending proposals. "
+                    "Resolve some before fetching more.",
+                }
+                return
+
             yield {"type": "scan_start", "max": max_scan, "category": config.article_selection.category}
 
             found_any = False
@@ -177,6 +194,8 @@ def create_app() -> Flask:
                 )
             terminal = event
 
+        if terminal and terminal["type"] == "queue_full":
+            return jsonify({"error": terminal["error"]}), 409
         if terminal and terminal["type"] == "error":
             return jsonify({"error": terminal["error"]}), 500
         return jsonify({"error": terminal["error"], "skipped": terminal.get("skipped", [])}), 404
@@ -212,6 +231,15 @@ def create_app() -> Flask:
                 }
                 for p in proposals.values()
             ]
+        )
+
+    @app.route("/api/proposals/pending-count")
+    def get_pending_count():
+        """Report the current pending-proposal count and the cap, so the UI can
+        disable 'Fetch new article' before the user even tries when the queue is full."""
+        pending = pending_proposal_count()
+        return jsonify(
+            {"pending": pending, "cap": MAX_PENDING_PROPOSALS, "at_cap": pending >= MAX_PENDING_PROPOSALS}
         )
 
     @app.route("/api/proposals/<proposal_id>")
@@ -359,6 +387,16 @@ def create_app() -> Flask:
             policy_reference=edit.policy_reference,
         )
 
+        return jsonify({"success": True})
+
+    @app.route("/api/proposals/<proposal_id>/reject", methods=["POST"])
+    def reject_proposal(proposal_id: str):
+        """Reject an entire proposal, freeing its queue slot. Sets status to 'rejected'
+        so it no longer counts toward the pending cap."""
+        if proposal_id not in proposals:
+            return jsonify({"error": "Proposal not found"}), 404
+
+        proposals[proposal_id].status = "rejected"
         return jsonify({"success": True})
 
     @app.route("/api/proposals/<proposal_id>/update-edit/<int:edit_index>", methods=["POST"])

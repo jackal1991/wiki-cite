@@ -1,5 +1,6 @@
 """Tests for the Flask web application."""
 
+import json
 from unittest.mock import Mock, patch
 
 import pytest
@@ -261,3 +262,85 @@ def test_create_app_with_missing_db_dir_does_not_raise(tmp_path, monkeypatch):
     app = create_app()  # must not raise
 
     assert app is not None
+
+
+def seed_pending(app, n):
+    for i in range(n):
+        p = make_proposal()
+        p.id = f"p{i}"
+        app.proposals[p.id] = p
+
+
+def test_pending_count_endpoint_reports_zero_when_empty(app):
+    client = app.test_client()
+
+    response = client.get("/api/proposals/pending-count")
+
+    assert response.status_code == 200
+    assert response.get_json() == {"pending": 0, "cap": 10, "at_cap": False}
+
+
+def test_pending_count_counts_proposals_not_edits(app):
+    proposal = make_proposal()
+    app.proposals[proposal.id] = proposal
+    client = app.test_client()
+
+    response = client.get("/api/proposals/pending-count")
+
+    assert response.get_json()["pending"] == 1
+
+
+def test_fetch_refused_at_cap_returns_queue_full(app):
+    seed_pending(app, 10)
+    client = app.test_client()
+
+    response = client.get("/api/fetch-article")
+
+    assert response.status_code == 409
+    assert "queue" in response.get_json()["error"].lower()
+
+
+def test_fetch_stream_refused_at_cap_emits_queue_full(app):
+    seed_pending(app, 10)
+    client = app.test_client()
+
+    response = client.get("/api/fetch-article/stream")
+
+    events = [json.loads(line[len("data: ") :]) for line in response.get_data(as_text=True).splitlines() if line.startswith("data: ")]
+    assert any(event["type"] == "queue_full" for event in events)
+
+
+def test_reject_proposal_sets_status_and_frees_slot(app):
+    seed_pending(app, 10)
+    client = app.test_client()
+    assert client.get("/api/proposals/pending-count").get_json()["at_cap"] is True
+
+    response = client.post("/api/proposals/p0/reject")
+
+    assert response.status_code == 200
+    assert response.get_json() == {"success": True}
+    assert app.proposals["p0"].status == "rejected"
+
+    pending_response = client.get("/api/proposals/pending-count").get_json()
+    assert pending_response == {"pending": 9, "cap": 10, "at_cap": False}
+
+
+def test_reject_proposal_unknown_id_404(app):
+    client = app.test_client()
+
+    response = client.post("/api/proposals/does-not-exist/reject")
+
+    assert response.status_code == 404
+
+
+def test_push_frees_a_slot(app):
+    seed_pending(app, 9)
+    pushed = make_proposal()
+    pushed.id = "pushed-1"
+    pushed.status = "pushed"
+    app.proposals[pushed.id] = pushed
+    client = app.test_client()
+
+    response = client.get("/api/proposals/pending-count").get_json()
+
+    assert response == {"pending": 9, "cap": 10, "at_cap": False}
