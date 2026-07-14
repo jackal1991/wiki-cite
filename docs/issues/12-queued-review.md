@@ -1,8 +1,9 @@
 # Issue #12 — Queued review: stack up to 10 pending proposals instead of forcing single-proposal review
 
-**Status:** In Progress
+**Status:** In Review
 **Complexity:** Standard
 **GitHub:** https://github.com/jackal1991/wiki-cite/issues/12
+**PR:** https://github.com/jackal1991/wiki-cite/pull/13
 
 ## Worktree
 
