@@ -59,6 +59,7 @@
         <div style="margin-top:22px; display:flex; align-items:center; gap:16px; flex-wrap:wrap;">
             <button class="btn-primary" id="fetch-btn" onclick="fetchNewArticle()">Fetch new article</button>
             <span style="font-size:13px; color:#656b5c;">Scans stubs lacking sources · skips living persons &amp; protected pages</span>
+            <span id="fetch-cap-note" class="muted" style="font-size:13px; color:#8a3b28; display:none;"></span>
             <a href="/stats" class="btn-ghost" style="margin-left:auto;">View stats →</a>
         </div>
     </div>
@@ -232,13 +233,35 @@
         renderPipeline();
     }
 
+    async function refreshFetchButton() {
+        const btn = document.getElementById('fetch-btn');
+        const note = document.getElementById('fetch-cap-note');
+        try {
+            const res = await fetch('/api/proposals/pending-count');
+            const { pending, cap, at_cap } = await res.json();
+            if (at_cap) {
+                btn.disabled = true;
+                btn.classList.add('is-disabled');
+                note.textContent = `Queue full — ${pending}/${cap} pending. Resolve or push a proposal to fetch more.`;
+                note.style.display = '';
+            } else {
+                btn.disabled = false;
+                btn.classList.remove('is-disabled');
+                note.style.display = 'none';
+            }
+        } catch (err) {
+            // On failure, fail open: leave the button enabled so the server-side cap still guards.
+            btn.disabled = false;
+            btn.classList.remove('is-disabled');
+            note.style.display = 'none';
+        }
+    }
+
     function returnToQueue(message) {
         if (evtSource) { evtSource.close(); evtSource = null; }
         document.getElementById('working-view').style.display = 'none';
         document.getElementById('queue-view').style.display = 'block';
-        const btn = document.getElementById('fetch-btn');
-        btn.disabled = false;
-        btn.classList.remove('is-disabled');
+        refreshFetchButton();
         if (message) {
             const errorDiv = document.getElementById('error');
             errorDiv.textContent = message;
@@ -317,13 +340,13 @@
             case 'selected':
                 scan.sweeping = false;
                 scan.phase = DONE_PHASE;
-                document.getElementById('working-title').textContent = `Found ${evt.edit_count} edit${evt.edit_count === 1 ? '' : 's'} on “${evt.title}”`;
-                document.getElementById('working-sub').textContent = 'Opening the review — nothing is published until you approve it.';
-                pushLog('select', '★', `Selected “${evt.title}” · ${evt.edit_count} edits — opening review`);
+                document.getElementById('working-title').textContent = `Found ${evt.edit_count} edit${evt.edit_count === 1 ? '' : 's'} on “${evt.title}” — added to your queue`;
+                document.getElementById('working-sub').textContent = 'Back to your queue. Review it when you like — nothing is published until you approve it.';
+                pushLog('select', '★', `Selected “${evt.title}” · ${evt.edit_count} edits — added to queue`);
                 renderViewport();
                 renderPipeline();
                 if (evtSource) { evtSource.close(); evtSource = null; }
-                setTimeout(() => { window.location.href = `/review/${evt.proposal_id}`; }, 1100);
+                setTimeout(() => { returnToQueue(); loadProposals(); }, 1100);
                 break;
             case 'failed': {
                 let message = evt.error || 'No article found';
@@ -334,11 +357,15 @@
             case 'error':
                 returnToQueue('Error: ' + (evt.error || 'fetch failed'));
                 break;
+            case 'queue_full':
+                returnToQueue(evt.error || 'Queue is full. Resolve some proposals before fetching more.');
+                break;
         }
     }
 
     function fetchNewArticle() {
         const btn = document.getElementById('fetch-btn');
+        if (btn.disabled) return;
         btn.disabled = true;
         btn.classList.add('is-disabled');
         document.getElementById('error').style.display = 'none';
@@ -547,6 +574,7 @@
 
     loadProposals();
     loadCategoryFilter();
+    refreshFetchButton();
 </script>
 {% endraw %}
 {% endblock %}

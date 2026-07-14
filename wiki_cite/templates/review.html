@@ -267,7 +267,10 @@
                 proposal.edits[i].approved = false;
             } catch (error) { /* keep going */ }
         }
-        renderEdits();
+        try {
+            await fetch(`/api/proposals/${proposalId}/reject`, { method: 'POST' });
+        } catch (error) { /* status update best-effort */ }
+        window.location.href = '/';
     }
 
     async function toggleDiff() {
