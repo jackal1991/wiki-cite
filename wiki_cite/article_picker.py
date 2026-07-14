@@ -6,6 +6,7 @@ import logging
 import random
 import re
 import sqlite3
+from collections import deque
 from datetime import datetime
 from collections.abc import Iterator
 
@@ -15,6 +16,7 @@ from requests.adapters import HTTPAdapter
 from urllib3.util import Retry
 import mwparserfromhell
 
+from wiki_cite.category_discovery import load_expansion
 from wiki_cite.config import get_config
 from wiki_cite.models import CandidateArticle
 
@@ -39,6 +41,63 @@ def _build_session(user_agent: str) -> requests.Session:
     session.mount("https://", adapter)
     session.mount("http://", adapter)
     return session
+
+def crawl_subcategories(
+    site,
+    root: str,
+    max_depth: int | None = None,
+) -> list[str]:
+    """Breadth-first walk of the subcategory tree under ``root``.
+
+    Sequential — one Wikipedia request in flight at a time, per API:Etiquette — and
+    cycle-safe: MediaWiki categories form a graph (a subcategory can loop back to an
+    ancestor), so a ``visited`` set guarantees termination and that each category is
+    fetched at most once.
+
+    Args:
+        site: an mwclient Site (``ArticlePicker.site``); ``site.pages[...]`` yields a
+            Category with ``.members(namespace=14)``.
+        root: root category name, with or without the ``Category:`` prefix.
+        max_depth: optional BFS depth cap (root is depth 0). ``None`` = unbounded
+            (still terminates via the visited set).
+
+    Returns:
+        A sorted, de-duplicated list of discovered category names, WITHOUT the
+        ``Category:`` prefix, INCLUDING the root itself. No relevance judgment is
+        applied here — that is the classification stage's job.
+    """
+    root_name = root.split(":", 1)[-1] if root.lower().startswith("category:") else root
+
+    results: list[str] = []
+    visited: set[str] = set()
+    queue: deque[tuple[str, int]] = deque([(root_name, 0)])
+
+    while queue:
+        name, depth = queue.popleft()
+        key = name.replace("_", " ").strip().casefold()
+        if key in visited:
+            continue
+        visited.add(key)
+        results.append(name)
+
+        if max_depth is not None and depth >= max_depth:
+            continue
+
+        try:
+            cat_page = site.pages[f"Category:{name}"]
+            members = list(cat_page.members(namespace=14))
+        except Exception as e:
+            logger.warning("Skipping subcategory branch %r: %s", name, e)
+            continue
+
+        for member in members:
+            child_name = member.name.split(":", 1)[-1] if member.name.lower().startswith("category:") else member.name
+            child_key = child_name.replace("_", " ").strip().casefold()
+            if child_key not in visited:
+                queue.append((child_name, depth + 1))
+
+    return sorted(results)
+
 
 # Matches inline {{Citation needed}} tags and its common redirects ({{cn}}, {{fact}}).
 # These are the signal Citation Hunt surfaces: a specific claim needing a source.
@@ -292,6 +351,21 @@ class ArticlePicker:
         return name.split(":", 1)[-1].replace("_", " ").strip().casefold()
 
     @staticmethod
+    def _expand_categories(names: list[str]) -> list[str]:
+        """For each configured category name, if a discovery file exists for it, replace it
+        with that file's discovered set (root + accepted subcats); otherwise keep the name
+        as-is (AC4.2 fallback). Returns a deduplicated, order-stable list."""
+        expanded: list[str] = []
+        seen: set[str] = set()
+        for name in names:
+            discovered = load_expansion(name)
+            for candidate in discovered if discovered is not None else [name]:
+                if candidate not in seen:
+                    seen.add(candidate)
+                    expanded.append(candidate)
+        return expanded
+
+    @staticmethod
     def category_filter(
         categories: list[str],
         include: list[str],
@@ -377,8 +451,12 @@ class ArticlePicker:
         if not ok:
             return False, reason, page_text, categories
 
-        # Check if BLP
-        if self.config.article_selection.exclude_blp and self.is_blp(page_text, categories):
+        # BLP is excluded by default. A deliberately-scoped topic filter may opt out via
+        # guardrails.relax_blp_when_topic_filtered — but ONLY when an include filter is
+        # actually active, so the flag can never silently disable BLP exclusion repo-wide.
+        include_filter_active = bool(include)
+        blp_relaxed = self.config.guardrails.relax_blp_when_topic_filtered and include_filter_active
+        if self.config.article_selection.exclude_blp and not blp_relaxed and self.is_blp(page_text, categories):
             return False, "BLP article", page_text, categories
 
         # Require at least one inline {{Citation needed}} claim to source.
@@ -466,6 +544,14 @@ class ArticlePicker:
         if start_prefix and hasattr(cat_page, "args"):
             cat_page.args["gcmstartsortkeyprefix"] = start_prefix
 
+        # Resolve and expand the include/exclude lists once per fetch (not once per page):
+        # each configured name that has a static discovery file is widened to its
+        # discovered subcategory set (no live Wikipedia subcategory call here — Phase 4).
+        include = include_categories if include_categories is not None else self.config.article_selection.include_categories
+        exclude = exclude_categories if exclude_categories is not None else self.config.article_selection.exclude_categories
+        include = self._expand_categories(include)
+        exclude = self._expand_categories(exclude)
+
         pool_size = max(self.config.article_selection.candidate_pool_size, limit)
         pool: list[CandidateArticle] = []
         # Sequential, one request in flight at a time — per mediawiki.org/wiki/API:Etiquette,
@@ -480,7 +566,7 @@ class ArticlePicker:
             if self.seen_store is not None and self.seen_store.is_seen(page.name):
                 continue
 
-            is_ok, _, page_text, categories = self._evaluate_candidate(page, include_categories, exclude_categories)
+            is_ok, _, page_text, categories = self._evaluate_candidate(page, include, exclude)
             if not is_ok:
                 continue
 

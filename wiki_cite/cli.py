@@ -3,12 +3,14 @@ Command-line interface for the Wikipedia Citation & Cleanup Tool.
 """
 
 import argparse
+import json
 import logging
 import sys
 from logging.handlers import RotatingFileHandler
 
 from wiki_cite.agent import ClaudeAgent
-from wiki_cite.article_picker import ArticlePicker
+from wiki_cite.article_picker import ArticlePicker, crawl_subcategories
+from wiki_cite.category_discovery import classify_categories, write_expansion_file
 from wiki_cite.config import get_config
 from wiki_cite.models import Article
 from wiki_cite.seen_store import SeenStore
@@ -133,6 +135,21 @@ def cmd_config(args):
     print(f"  Exclude protected: {config.article_selection.exclude_protected}")
 
 
+def cmd_discover_categories(args):
+    """Crawl a category's subcategory tree and write a static expansion file."""
+    picker = ArticlePicker()
+
+    print(f"Crawling subcategories under {args.root!r}...")
+    raw = crawl_subcategories(picker.site, args.root, max_depth=args.max_depth)
+
+    print(f"Discovered {len(raw)} categories; classifying...")
+    accepted = classify_categories(raw, batch_size=args.batch_size)
+
+    path = write_expansion_file(args.root, accepted, max_depth=args.max_depth)
+    written = json.loads(path.read_text(encoding="utf-8"))["categories"]
+    print(f"Wrote {len(written)} accepted categories to {path}")
+
+
 def cmd_stats(args):
     """Show approval/success rates by dimension, from the recorded outcomes."""
     store = SeenStore(get_config().seen_db_path)
@@ -189,6 +206,16 @@ def main():
     # Stats command
     stats_parser = subparsers.add_parser("stats", help="Show approval/success rates by dimension")
     stats_parser.set_defaults(func=cmd_stats)
+
+    # Discover categories command
+    discover_parser = subparsers.add_parser(
+        "discover-categories",
+        help="Crawl a category's subcategory tree and write a static expansion file",
+    )
+    discover_parser.add_argument("root", help="Root category name (with or without Category: prefix)")
+    discover_parser.add_argument("--max-depth", type=int, default=None, help="BFS depth cap (default: unbounded)")
+    discover_parser.add_argument("--batch-size", type=int, default=20, help="Category names per Anthropic classification call")
+    discover_parser.set_defaults(func=cmd_discover_categories)
 
     # Parse arguments
     args = parser.parse_args()

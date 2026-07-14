@@ -10,6 +10,7 @@ guardrails:
   max_content_removal_pct: 20
   min_similarity_ratio: 0.85
   skip_blp_articles: true
+  relax_blp_when_topic_filtered: false  # opt-in: only when an include_categories filter is active, allow BLP articles (WP:BLP is strict — keep off unless deliberately scoping a topic)
 
 sources:
   search_apis:

@@ -1,12 +1,13 @@
 """Tests for article picker."""
 
+import logging
 import random
 import sqlite3
 
 import pytest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
-from wiki_cite.article_picker import ArticlePicker, CandidateScorer, _build_session, build_focused_excerpt
+from wiki_cite.article_picker import ArticlePicker, CandidateScorer, _build_session, build_focused_excerpt, crawl_subcategories
 from wiki_cite.config import Config, get_config, set_config
 from wiki_cite.models import CandidateArticle
 from wiki_cite.seen_store import SeenStore
@@ -262,6 +263,132 @@ def test_fetch_candidates_passes_category_overrides(mock_site):
     assert "Included Article" in titles
 
 
+def test_expand_categories_replaces_name_with_discovery_file(monkeypatch):
+    """A configured name with a discovery file is replaced with that file's discovered set."""
+    monkeypatch.setattr(
+        "wiki_cite.article_picker.load_expansion",
+        lambda name: ["American Politicians", "American Politician Stubs"] if name == "American Politicians" else None,
+    )
+
+    result = ArticlePicker._expand_categories(["American Politicians"])
+
+    assert result == ["American Politicians", "American Politician Stubs"]
+
+
+def test_expand_categories_keeps_name_when_no_discovery_file(monkeypatch):
+    """AC4.2: a name with no discovery file stays a single-name direct-match entry."""
+    monkeypatch.setattr("wiki_cite.article_picker.load_expansion", lambda name: None)
+
+    result = ArticlePicker._expand_categories(["Sports", "History"])
+
+    assert result == ["Sports", "History"]
+
+
+def test_expand_categories_dedupes_preserving_order(monkeypatch):
+    monkeypatch.setattr(
+        "wiki_cite.article_picker.load_expansion",
+        lambda name: ["Shared", "A Only"] if name == "A" else ["Shared", "B Only"] if name == "B" else None,
+    )
+
+    result = ArticlePicker._expand_categories(["A", "B"])
+
+    assert result == ["Shared", "A Only", "B Only"]
+
+
+def test_fetch_candidates_expands_include_category_via_discovery_file(mock_site):
+    """AC4.1: with an expansion file present for the configured include category, an
+    article whose category is a *discovered subcategory* (not the root) passes the filter."""
+    picker = ArticlePicker(site=mock_site)
+
+    subcat = Mock()
+    subcat.name = "Category:American Politician Stubs"
+    matching_page = Mock()
+    matching_page.name = "Subcat Article"
+    matching_page.redirect = False
+    matching_page.namespace = 0
+    matching_page.protection = {}
+    matching_page.revision = "1"
+    matching_page.text = Mock(return_value="A fresh and notable claim about the subject.{{Citation needed}}")
+    matching_page.categories = Mock(return_value=[subcat])
+
+    mock_site.pages = {"Category:All_articles_with_unsourced_statements": [matching_page]}
+
+    with patch(
+        "wiki_cite.article_picker.load_expansion",
+        side_effect=lambda name: ["American Politicians", "American Politician Stubs"] if name == "American Politicians" else None,
+    ):
+        titles = [c.title for c in picker.fetch_candidates(limit=5, include_categories=["American Politicians"])]
+
+    assert "Subcat Article" in titles
+
+
+def test_fetch_candidates_no_discovery_file_is_direct_match_only(mock_site):
+    """AC4.2: with no file for the configured include category, filtering is
+    direct-match-only — the root itself passes, an unrelated subcategory does not — and
+    nothing raises."""
+    picker = ArticlePicker(site=mock_site)
+
+    root_cat = Mock()
+    root_cat.name = "Category:American Politicians"
+    root_page = Mock()
+    root_page.name = "Root Article"
+    root_page.redirect = False
+    root_page.namespace = 0
+    root_page.protection = {}
+    root_page.revision = "1"
+    root_page.text = Mock(return_value="A fresh and notable claim about the subject.{{Citation needed}}")
+    root_page.categories = Mock(return_value=[root_cat])
+
+    subcat = Mock()
+    subcat.name = "Category:Some Undiscovered Subcat"
+    subcat_page = Mock()
+    subcat_page.name = "Subcat Article"
+    subcat_page.redirect = False
+    subcat_page.namespace = 0
+    subcat_page.protection = {}
+    subcat_page.revision = "2"
+    subcat_page.text = Mock(return_value="A fresh and notable claim about the subject.{{Citation needed}}")
+    subcat_page.categories = Mock(return_value=[subcat])
+
+    mock_site.pages = {"Category:All_articles_with_unsourced_statements": [root_page, subcat_page]}
+
+    with patch("wiki_cite.article_picker.load_expansion", return_value=None):
+        titles = [c.title for c in picker.fetch_candidates(limit=5, include_categories=["American Politicians"])]
+
+    assert "Root Article" in titles
+    assert "Subcat Article" not in titles
+
+
+def test_fetch_candidates_blp_relaxation_flag_has_zero_effect_with_no_include_filter(mock_site):
+    """AC5.2, exercised through the real fetch_candidates request path (not just
+    is_candidate): with relax_blp_when_topic_filtered=True but no include_categories
+    configured (the default no-topic-filter case), a BLP article is still excluded —
+    the flag must have zero effect when there's no active include filter to scope it to."""
+    picker = ArticlePicker(site=mock_site)
+    picker.config.guardrails.relax_blp_when_topic_filtered = True
+    try:
+        blp_category = Mock()
+        blp_category.name = "Category:Living people"
+        blp_page = Mock()
+        blp_page.name = "Living Person Article"
+        blp_page.redirect = False
+        blp_page.namespace = 0
+        blp_page.protection = {}
+        blp_page.revision = "1"
+        blp_page.text = Mock(return_value="The politician was elected in 1990.{{Citation needed}}")
+        blp_page.categories = Mock(return_value=[blp_category])
+
+        mock_site.pages = {"Category:All_articles_with_unsourced_statements": [blp_page]}
+
+        # No include_categories override, and config.article_selection.include_categories
+        # defaults to [] — i.e. no topic filter active at all.
+        titles = [c.title for c in picker.fetch_candidates(limit=5)]
+
+        assert "Living Person Article" not in titles
+    finally:
+        picker.config.guardrails.relax_blp_when_topic_filtered = False
+
+
 def test_category_filter_include_only_overlap_passes():
     """Include-only, article overlaps -> passes."""
     ok, reason = ArticlePicker.category_filter(["History"], ["History"], [])
@@ -322,6 +449,59 @@ def test_is_candidate_rejects_excluded_category_even_with_citation_needed(picker
         assert "excluded category" in reason
     finally:
         picker.config.article_selection.exclude_categories = []
+
+
+def _make_blp_page():
+    page = Mock()
+    page.redirect = False
+    page.namespace = 0
+    page.protection = {}
+    page.text = Mock(return_value="The politician was elected in 1990.{{Citation needed}}")
+    category = Mock()
+    category.name = "Category:Living people"
+    page.categories = Mock(return_value=[category])
+    return page
+
+
+def test_is_candidate_blp_relaxed_with_active_include_filter_is_accepted(picker):
+    """AC5.1: flag True + non-empty include list + BLP article -> accepted (BLP check skipped)."""
+    picker.config.guardrails.relax_blp_when_topic_filtered = True
+    try:
+        is_candidate, reason = picker.is_candidate(_make_blp_page(), include_categories=["Living people"])
+        assert is_candidate is True
+        assert reason == ""
+    finally:
+        picker.config.guardrails.relax_blp_when_topic_filtered = False
+
+
+def test_is_candidate_blp_relaxed_without_include_filter_still_rejects(picker):
+    """AC5.2: flag True + empty include list + BLP article -> rejected as "BLP article".
+    The flag must never silently disable BLP exclusion repo-wide."""
+    picker.config.guardrails.relax_blp_when_topic_filtered = True
+    try:
+        is_candidate, reason = picker.is_candidate(_make_blp_page(), include_categories=[])
+        assert is_candidate is False
+        assert reason == "BLP article"
+    finally:
+        picker.config.guardrails.relax_blp_when_topic_filtered = False
+
+
+def test_is_candidate_blp_default_flag_rejects_with_include_filter(picker):
+    """AC5.3: flag False (default) + BLP article -> rejected, identical to current
+    behavior, even when an include filter is active."""
+    assert picker.config.guardrails.relax_blp_when_topic_filtered is False
+    is_candidate, reason = picker.is_candidate(_make_blp_page(), include_categories=["Living people"])
+    assert is_candidate is False
+    assert reason == "BLP article"
+
+
+def test_is_candidate_blp_default_flag_rejects_without_include_filter(picker):
+    """AC5.3: flag False (default) + BLP article -> rejected, identical to current
+    behavior, with no include filter active."""
+    assert picker.config.guardrails.relax_blp_when_topic_filtered is False
+    is_candidate, reason = picker.is_candidate(_make_blp_page(), include_categories=[])
+    assert is_candidate is False
+    assert reason == "BLP article"
 
 
 def _make_candidate_page(name, revision="1"):
@@ -534,3 +714,105 @@ def test_is_protected_without_protection(picker):
 
     is_protected = picker.is_protected(page)
     assert is_protected is False
+
+
+class _FakeMember:
+    """Stand-in for an mwclient member Page: only `.name` is used by crawl_subcategories."""
+
+    def __init__(self, name: str):
+        self.name = name
+
+
+class _FakeCategoryPage:
+    """Stand-in for an mwclient Category: `.members(namespace=14)` returns subcategories."""
+
+    def __init__(self, children: list[str] | Exception):
+        self._children = children
+
+    def members(self, namespace=None, **kwargs):
+        if isinstance(self._children, Exception):
+            raise self._children
+        return [_FakeMember(f"Category:{child}") for child in self._children]
+
+
+def _make_crawl_site(tree: dict[str, list[str] | Exception]):
+    """Build a fake mwclient Site whose `.pages["Category:X"]` looks up `tree[X]`."""
+    site = Mock()
+    site.pages = {f"Category:{name}": _FakeCategoryPage(children) for name, children in tree.items()}
+    return site
+
+
+def test_crawl_subcategories_shallow_tree():
+    """AC1.1: a shallow tree returns all reachable subcategory names plus the root."""
+    tree = {
+        "Root": ["Child A", "Child B"],
+        "Child A": ["Grandchild"],
+        "Child B": [],
+        "Grandchild": [],
+    }
+    site = _make_crawl_site(tree)
+
+    result = crawl_subcategories(site, "Category:Root")
+
+    assert result == sorted(["Root", "Child A", "Child B", "Grandchild"])
+
+
+def test_crawl_subcategories_degrades_on_branch_failure(caplog):
+    """AC1.2: a branch whose `.members()` raises is logged and skipped, but the
+    crawl still returns the other branches instead of aborting."""
+    tree = {
+        "Root": ["Good Branch", "Bad Branch"],
+        "Good Branch": ["Leaf"],
+        "Bad Branch": RuntimeError("API error"),
+        "Leaf": [],
+    }
+    site = _make_crawl_site(tree)
+
+    with caplog.at_level(logging.WARNING):
+        result = crawl_subcategories(site, "Root")
+
+    assert result == sorted(["Root", "Good Branch", "Bad Branch", "Leaf"])
+    assert any("Bad Branch" in record.message for record in caplog.records)
+
+
+def test_crawl_subcategories_handles_cycles_and_diamonds():
+    """AC1.3: a category reachable via two parents (diamond) or pointing back at an
+    ancestor (cycle) terminates and yields each name exactly once."""
+    tree = {
+        "Root": ["Branch A", "Branch B"],
+        "Branch A": ["Shared", "Root"],  # cycle back to Root
+        "Branch B": ["Shared"],  # diamond: Shared reachable via A and B
+        "Shared": ["Root"],  # cycle back to Root again
+    }
+    site = _make_crawl_site(tree)
+
+    result = crawl_subcategories(site, "Root")
+
+    assert result == sorted(["Root", "Branch A", "Branch B", "Shared"])
+    assert len(result) == len(set(result))
+
+
+def test_crawl_subcategories_respects_max_depth():
+    """max_depth caps the BFS: nodes at the cap are included but not expanded."""
+    tree = {
+        "Root": ["Child"],
+        "Child": ["Grandchild"],
+        "Grandchild": [],
+    }
+    site = _make_crawl_site(tree)
+
+    result = crawl_subcategories(site, "Root", max_depth=1)
+
+    assert result == sorted(["Root", "Child"])
+
+
+def test_crawl_subcategories_strips_category_prefix():
+    """Returned names never carry the `Category:` prefix, root included, regardless
+    of whether the caller passed the prefix in."""
+    tree = {"Root": ["Child"], "Child": []}
+    site = _make_crawl_site(tree)
+
+    result = crawl_subcategories(site, "Category:Root")
+
+    assert result == ["Child", "Root"]
+    assert all(not name.startswith("Category:") for name in result)
