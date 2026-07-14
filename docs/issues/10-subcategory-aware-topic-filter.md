@@ -1,8 +1,9 @@
 # Issue #10 — Recursive/subcategory-aware category matching for article-selection topic filter
 
-**Status:** In Progress
+**Status:** In Review
 **Complexity:** Complex
 **GitHub:** https://github.com/jackal1991/wiki-cite/issues/10
+**PR:** https://github.com/jackal1991/wiki-cite/pull/11
 
 ## Worktree
 
