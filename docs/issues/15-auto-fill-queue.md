@@ -1,8 +1,14 @@
 # Issue #15 — Auto-fill queue: keep fetching automatically until the 10-proposal cap
 
-**Status:** Ready
+**Status:** In Progress
 **Complexity:** Standard
 **GitHub:** https://github.com/jackal1991/wiki-cite/issues/15
+
+## Worktree
+
+- branch: feat/15-auto-fill-queue
+- path: .worktrees/15-auto-fill-queue
+- created: 2026-07-14
 
 ## Summary
 #12 made it possible to stack up to 10 pending proposals in the queue without
