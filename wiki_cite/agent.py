@@ -9,6 +9,7 @@ docs/design-plans/2026-07-08-4-agentic-source-search.md for the full design.
 """
 
 import json
+import logging
 import re
 import uuid
 from typing import Any
@@ -20,6 +21,8 @@ from wiki_cite.config import get_config
 from wiki_cite.guardrails import EditGuardrails
 from wiki_cite.models import Article, EditProposal, EditType, ProposedEdit, Source
 from wiki_cite.source_finder import SourceFinder
+
+logger = logging.getLogger(__name__)
 
 
 SEARCH_SYSTEM_PROMPT = """You are a Wikipedia copyeditor and citation assistant. Your task is to make
@@ -88,6 +91,15 @@ edits. This is the ONLY way to end the task — do not respond with plain text. 
 verify a claim with a reliable source, do not remove it (unless it violates BLP policy); simply
 omit a citation edit for it.
 """
+
+# Cached: SEARCH_SYSTEM_PROMPT and ALL_TOOLS are frozen module-level constants,
+# byte-identical on every call across every article and every turn of the search
+# loop. Tools render before system (see prompt-caching docs), so one breakpoint
+# on the system block covers both — the shared prefix is written to cache once
+# and read (at ~10% of input cost) on every subsequent call in the process.
+_CACHED_SEARCH_SYSTEM_PROMPT: list[dict[str, Any]] = [
+    {"type": "text", "text": SEARCH_SYSTEM_PROMPT, "cache_control": {"type": "ephemeral"}}
+]
 
 
 # --- Tool schemas ------------------------------------------------------------
@@ -435,12 +447,19 @@ Remember:
                 response = self.client.messages.create(
                     model=self.config.agent.model,
                     max_tokens=8000,
-                    system=SEARCH_SYSTEM_PROMPT,
+                    system=_CACHED_SEARCH_SYSTEM_PROMPT,
                     thinking={"type": "adaptive", "display": "summarized"},
                     output_config={"effort": "high"},
                     tools=tools,
                     tool_choice=tool_choice,
                     messages=messages,
+                )
+                logger.debug(
+                    "messages.create usage: input=%s cache_read=%s cache_creation=%s output=%s",
+                    response.usage.input_tokens,
+                    response.usage.cache_read_input_tokens,
+                    response.usage.cache_creation_input_tokens,
+                    response.usage.output_tokens,
                 )
 
                 # --- stop_reason handling (guard BEFORE reading content) ---
@@ -485,7 +504,7 @@ Remember:
                     break
                 turns += 1
         except Exception as e:
-            print(f"Error calling Claude API: {e}")
+            logger.warning("Error calling Claude API: %s", e)
             yield {"type": "model_error", "error": str(e)}
             yield {
                 "type": "analyzed",

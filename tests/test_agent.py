@@ -22,7 +22,8 @@ def _tool_use_block(tool_id: str, name: str, tool_input: dict):
 
 
 def _response(stop_reason: str, content: list):
-    return SimpleNamespace(stop_reason=stop_reason, content=content)
+    usage = SimpleNamespace(input_tokens=10, cache_read_input_tokens=0, cache_creation_input_tokens=0, output_tokens=10)
+    return SimpleNamespace(stop_reason=stop_reason, content=content, usage=usage)
 
 
 @pytest.fixture
@@ -413,6 +414,28 @@ def test_max_tokens_stop_reason_falls_back_to_text_extraction(agent, sample_arti
     assert len(proposal.edits) == 1
     assert proposal.edits[0].edit_type == EditType.CITATION_ADDED
     assert not any(e["type"] == "model_error" for e in events)
+
+
+def test_system_prompt_is_cached(agent, sample_article):
+    """The system prompt (and tools, which render before it) must carry a
+    cache_control breakpoint - it's a frozen constant on every call across every
+    article, so caching it is a pure win. Verified on both the first call and a
+    later turn, since the cached constant is reused unchanged across the loop."""
+    text = '```json\n[]\n```'
+    response1 = _response("tool_use", [_tool_use_block("t1", "search_scholar", {"query": "q"})])
+    response2 = _response("end_turn", [_text_block(text)])
+
+    with patch.object(agent.client.messages, "create", side_effect=[response1, response2]) as mock_create:
+        _run_events(agent, sample_article)
+
+    assert mock_create.call_count == 2
+    for _, kwargs in mock_create.call_args_list:
+        system = kwargs["system"]
+        assert isinstance(system, list)
+        assert len(system) == 1
+        assert system[0]["type"] == "text"
+        assert system[0]["cache_control"] == {"type": "ephemeral"}
+        assert system[0]["text"] == SEARCH_SYSTEM_PROMPT
 
 
 def test_tool_execution_failure_reports_is_error_and_continues(agent, sample_article):
