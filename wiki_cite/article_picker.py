@@ -9,6 +9,7 @@ import sqlite3
 from collections import deque
 from datetime import datetime
 from collections.abc import Iterator
+from functools import lru_cache
 
 import mwclient
 import requests
@@ -351,6 +352,15 @@ class ArticlePicker:
         return name.split(":", 1)[-1].replace("_", " ").strip().casefold()
 
     @staticmethod
+    @lru_cache(maxsize=32)
+    def _normalized_set(names: tuple[str, ...]) -> frozenset[str]:
+        """Cached normalization for a category name tuple. include/exclude lists are
+        the same object across every candidate evaluated in one fetch_candidates()
+        call (potentially thousands of names, from a discovery-file expansion) — this
+        avoids re-normalizing them from scratch on every single page checked."""
+        return frozenset(ArticlePicker._normalize_category(c) for c in names)
+
+    @staticmethod
     def _expand_categories(names: list[str]) -> list[str]:
         """For each configured category name, if a discovery file exists for it, replace it
         with that file's discovered set (root + accepted subcats); otherwise keep the name
@@ -377,13 +387,13 @@ class ArticlePicker:
         ``include``. A non-empty ``include`` then requires overlap to pass. Empty
         lists are no-ops (matches today's behavior).
         """
-        article = {ArticlePicker._normalize_category(c) for c in categories}
-        excluded = {ArticlePicker._normalize_category(c) for c in exclude}
+        article = ArticlePicker._normalized_set(tuple(categories))
+        excluded = ArticlePicker._normalized_set(tuple(exclude))
         hit = article & excluded
         if hit:
             return False, f"excluded category: {sorted(hit)[0]}"
         if include:
-            included = {ArticlePicker._normalize_category(c) for c in include}
+            included = ArticlePicker._normalized_set(tuple(include))
             if not (article & included):
                 return False, "not in included categories"
         return True, ""
