@@ -610,6 +610,61 @@ def test_fetch_candidates_batch_query_no_args_attr_is_safe(mock_site):
     assert result == []
 
 
+def test_batch_categories_reads_info_and_strips_prefix(picker):
+    """The batch-read path strips 'Category:' the same way get_categories() does,
+    so both paths produce content-identical category names (AC3.2/AC4.2)."""
+    page = Mock()
+    page._info = {"categories": [{"ns": 14, "title": "Category:History"}, {"ns": 14, "title": "Category:Physics"}]}
+
+    assert picker._batch_categories(page) == ["History", "Physics"]
+
+
+def test_batch_categories_empty_list_is_complete_not_fallback(picker):
+    """A page genuinely in zero categories is complete data, not missing data —
+    must return [], not None (which would trigger a needless fallback)."""
+    page = Mock()
+    page._info = {"categories": []}
+
+    assert picker._batch_categories(page) == []
+
+
+def test_batch_categories_missing_key_returns_none(picker):
+    """No 'categories' key in _info (batch prop=categories data absent) signals
+    fallback to per-page get_categories() (AC4.1)."""
+    page = Mock()
+    page._info = {}
+
+    assert picker._batch_categories(page) is None
+
+
+def test_batch_categories_non_dict_info_returns_none(picker):
+    """A bare Mock() page has a truthy auto-attribute _info that is itself a
+    Mock, not a dict — must be treated as unusable and fall back rather than
+    raising when iterated (AC4.1)."""
+    page = Mock()
+
+    assert picker._batch_categories(page) is None
+
+
+def test_batch_categories_clcontinue_returns_none(picker):
+    """A clcontinue marker on _info means the category list was truncated by
+    the API — must fall back rather than filter on a partial list (AC4.1)."""
+    page = Mock()
+    page._info = {"categories": [{"title": "Category:X"}], "clcontinue": "some-continue-token"}
+
+    assert picker._batch_categories(page) is None
+
+
+def test_batch_categories_malformed_entry_returns_none(picker):
+    """An entry missing 'title' means the categories list is malformed — must
+    fall back rather than return a partial list that could silently flip a
+    filter decision (AC4.2)."""
+    page = Mock()
+    page._info = {"categories": [{"ns": 14}]}
+
+    assert picker._batch_categories(page) is None
+
+
 @pytest.fixture
 def restore_config():
     """Config is global (get_config/set_config); restore it after tests that override it."""

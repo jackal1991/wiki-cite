@@ -345,6 +345,39 @@ class ArticlePicker:
         except Exception:
             return []
 
+    def _batch_categories(self, page) -> list[str] | None:
+        """Category names for ``page`` taken from the batch generator response
+        (``page._info['categories']``, present when the batch query included
+        ``prop=categories`` — see #18), with the ``Category:`` prefix stripped to
+        match ``get_categories()``.
+
+        Returns ``None`` to signal the caller to fall back to a per-page
+        ``get_categories(page)`` call, when the batch data is absent, unusable, or
+        truncated:
+
+          * no ``_info`` dict, or ``_info`` is not a real dict (e.g. a bare test
+            double), or no ``categories`` key;
+          * a ``clcontinue`` marker on ``_info`` — the page has more categories than
+            the batch returned (only realistic for 500+ category pages given
+            ``cllimit=max``), so the list is partial and must not drive a filter
+            decision;
+          * ``categories`` is not a list of ``{"title": ...}`` dicts.
+        """
+        info = getattr(page, "_info", None)
+        if not isinstance(info, dict):
+            return None
+        if info.get("clcontinue") is not None:
+            return None
+        raw = info.get("categories")
+        if not isinstance(raw, list):
+            return None
+        names: list[str] = []
+        for item in raw:
+            if not isinstance(item, dict) or "title" not in item:
+                return None  # malformed entry: don't filter on a partial/garbled list
+            names.append(item["title"].replace("Category:", ""))
+        return names
+
     @staticmethod
     def _normalize_category(name: str) -> str:
         """Normalize a category name for comparison: drop the ``Category:`` prefix,
