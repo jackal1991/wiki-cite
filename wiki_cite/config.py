@@ -81,6 +81,12 @@ class FeedbackConfig(BaseSettings):
     min_samples: int = 5
 
 
+class RevertTrackingConfig(BaseSettings):
+    """Configuration for the post-push revert checker."""
+
+    check_horizon_days: int = 7
+
+
 class Config(BaseSettings):
     """Main configuration class."""
 
@@ -92,6 +98,7 @@ class Config(BaseSettings):
     wikipedia: WikipediaConfig = Field(default_factory=WikipediaConfig)
     article_selection: ArticleSelectionConfig = Field(default_factory=ArticleSelectionConfig)
     feedback: FeedbackConfig = Field(default_factory=FeedbackConfig)
+    revert_tracking: RevertTrackingConfig = Field(default_factory=RevertTrackingConfig)
 
     # API Keys from environment
     anthropic_api_key: str = Field(default="", alias="ANTHROPIC_API_KEY")
@@ -133,6 +140,8 @@ class Config(BaseSettings):
             config_data["article_selection"] = ArticleSelectionConfig(**yaml_config["article_selection"])
         if "feedback" in yaml_config:
             config_data["feedback"] = FeedbackConfig(**yaml_config["feedback"])
+        if "revert_tracking" in yaml_config:
+            config_data["revert_tracking"] = RevertTrackingConfig(**yaml_config["revert_tracking"])
 
         return cls(**config_data)
 

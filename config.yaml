@@ -39,3 +39,9 @@ feedback:
   enabled: true
   epsilon: 0.15       # exploration jitter added to every candidate score
   min_samples: 5      # dimension values below this sample count get the neutral 0.5 prior
+
+revert_tracking:
+  # Days after a push during which `wiki-cite check-reverts` keeps re-checking an
+  # article for a revert. After this window elapses with no revert found, the
+  # article drops out of the check set (bounds the work per run).
+  check_horizon_days: 7

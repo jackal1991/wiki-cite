@@ -134,6 +134,9 @@ def cmd_config(args):
     print(f"  Exclude BLP: {config.article_selection.exclude_blp}")
     print(f"  Exclude protected: {config.article_selection.exclude_protected}")
 
+    print("\nRevert Tracking:")
+    print(f"  Check horizon (days): {config.revert_tracking.check_horizon_days}")
+
 
 def cmd_discover_categories(args):
     """Crawl a category's subcategory tree and write a static expansion file."""
