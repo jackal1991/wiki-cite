@@ -3,7 +3,7 @@
 import pytest
 from unittest.mock import Mock, patch
 
-from wiki_cite.source_finder import SourceFinder, ReliabilityRating, extract_citation_url
+from wiki_cite.source_finder import SourceFinder, ReliabilityRating, extract_citation_url, extract_all_citation_urls
 from wiki_cite.models import Source, SourceType
 
 
@@ -279,6 +279,39 @@ def test_extract_citation_url_returns_none_when_absent():
     """Test that extraction returns None when there's no URL."""
     text = "Fixed grammar, no citation here."
     assert extract_citation_url(text) is None
+
+
+def test_extract_all_citation_urls_multiple_cites_and_bare():
+    """Test that every cite-template URL and bare URL is returned, in first-seen order."""
+    text = (
+        "First claim.<ref>{{cite web |title=A |url=https://example.com/a}}</ref> "
+        "Second claim.<ref>{{cite news |title=B |URL=https://example.com/b}}</ref> "
+        "See also https://example.com/c for background."
+    )
+    assert extract_all_citation_urls(text) == [
+        "https://example.com/a",
+        "https://example.com/b",
+        "https://example.com/c",
+    ]
+
+
+def test_extract_all_citation_urls_dedups_preserving_order():
+    """Test that a URL repeated as a cite param and again bare is surfaced once, in first-seen order."""
+    text = (
+        "First claim.<ref>{{cite web |title=A |url=https://example.com/a}}</ref> "
+        "Repeated claim.<ref>{{cite web |title=A2 |url=https://example.com/a}}</ref> "
+        "Also see https://example.com/a and https://example.com/b for details."
+    )
+    assert extract_all_citation_urls(text) == [
+        "https://example.com/a",
+        "https://example.com/b",
+    ]
+
+
+def test_extract_all_citation_urls_empty_when_no_citations():
+    """Test that a citation-free page returns an empty list, not None or an error."""
+    text = "Fixed grammar, no citation here."
+    assert extract_all_citation_urls(text) == []
 
 
 def test_find_sources_for_claim_returns_sorted(source_finder):

@@ -77,6 +77,46 @@ def extract_citation_url(text: str) -> str | None:
     return None
 
 
+def extract_all_citation_urls(text: str) -> list[str]:
+    """Extract every distinct external citation URL from a wikitext blob.
+
+    Scans all {{cite ...}} templates' |url=/|URL= parameters first, then every bare
+    https?:// URL in the text. Deduplicates while preserving first-seen order — the
+    citation most relevant to a specific claim is not guaranteed to be the first one
+    on the page, so all distinct URLs are surfaced (design decision: all-URLs, not
+    first-only).
+
+    Args:
+        text: Wikitext (typically a whole backlinking article's source).
+
+    Returns:
+        A list of distinct URLs in first-seen order. Empty list if none are found
+        (never raises for a citation-free page).
+    """
+    urls: list[str] = []
+    seen: set[str] = set()
+
+    wikicode = mwparserfromhell.parse(text)
+    for template in wikicode.filter_templates():
+        if template.name.strip().lower().startswith("cite"):
+            for param_name in ("url", "URL"):
+                if template.has(param_name):
+                    value = str(template.get(param_name).value).strip()
+                    if value:
+                        if value not in seen:
+                            seen.add(value)
+                            urls.append(value)
+                        break
+
+    for bare_url_match in re.finditer(r"https?://[^\s|}\]<>\"']+", text):
+        value = bare_url_match.group(0)
+        if value not in seen:
+            seen.add(value)
+            urls.append(value)
+
+    return urls
+
+
 class SourceFinder:
     """Finds reliable sources for verifying existing claims."""
 
