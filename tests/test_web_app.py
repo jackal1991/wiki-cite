@@ -300,6 +300,81 @@ def test_fetch_refused_at_cap_returns_queue_full(app):
     assert "queue" in response.get_json()["error"].lower()
 
 
+def test_next_pending_returns_following_pending(app):
+    seed_pending(app, 3)
+    client = app.test_client()
+
+    response = client.get("/api/proposals/p0/next")
+    assert response.status_code == 200
+    assert response.get_json() == {"next_id": "p1"}
+
+    response = client.get("/api/proposals/p1/next")
+    assert response.get_json() == {"next_id": "p2"}
+
+
+def test_next_pending_excludes_current(app):
+    seed_pending(app, 3)
+    client = app.test_client()
+
+    response = client.get("/api/proposals/p1/next")
+
+    assert response.get_json()["next_id"] != "p1"
+    assert response.get_json() == {"next_id": "p2"}
+
+
+def test_next_pending_wraps_around(app):
+    seed_pending(app, 3)
+    client = app.test_client()
+
+    response = client.get("/api/proposals/p2/next")
+
+    assert response.get_json() == {"next_id": "p0"}
+
+
+def test_next_pending_skips_non_pending(app):
+    seed_pending(app, 3)
+    app.proposals["p1"].status = "pushed"
+    client = app.test_client()
+
+    response = client.get("/api/proposals/p0/next")
+
+    assert response.get_json() == {"next_id": "p2"}
+
+
+def test_next_pending_none_when_only_current_pending(app):
+    proposal = make_proposal()
+    app.proposals[proposal.id] = proposal
+
+    resolved = make_proposal()
+    resolved.id = "p2"
+    resolved.status = "rejected"
+    app.proposals[resolved.id] = resolved
+
+    client = app.test_client()
+    response = client.get(f"/api/proposals/{proposal.id}/next")
+
+    assert response.status_code == 200
+    assert response.get_json() == {"next_id": None}
+
+
+def test_next_pending_none_with_single_proposal(app):
+    proposal = make_proposal()
+    app.proposals[proposal.id] = proposal
+    client = app.test_client()
+
+    response = client.get(f"/api/proposals/{proposal.id}/next")
+
+    assert response.get_json() == {"next_id": None}
+
+
+def test_next_pending_unknown_id_404(app):
+    client = app.test_client()
+
+    response = client.get("/api/proposals/does-not-exist/next")
+
+    assert response.status_code == 404
+
+
 def test_fetch_stream_refused_at_cap_emits_queue_full(app):
     seed_pending(app, 10)
     client = app.test_client()
