@@ -213,20 +213,14 @@ def test_fetch_candidates_skips_seen(mock_site):
 
     seen_page = Mock()
     seen_page.name = "Old News"
-    fresh_page = Mock()
-    fresh_page.name = "Fresh Article"
-    fresh_page.redirect = False
-    fresh_page.namespace = 0
-    fresh_page.protection = {}
-    fresh_page.revision = "42"
-    fresh_page.text = Mock(return_value="This is a fresh and notable claim about the subject.{{Citation needed}}")
-    fresh_page.categories = Mock(return_value=["News"])
+    fresh_page = _make_page("Fresh Article", cats=["News"], text="This is a fresh and notable claim about the subject.{{Citation needed}}", revision="42")
     mock_site.pages = {"Category:All_articles_with_unsourced_statements": [seen_page, fresh_page]}
 
     titles = [c.title for c in picker.fetch_candidates(limit=5)]
     assert "Old News" not in titles
     assert "Fresh Article" in titles
     seen_page.text.assert_not_called()  # seen skip happens before any page fetch
+    fresh_page.categories.assert_not_called()  # batch data supplies categories (#18)
 
 
 def test_fetch_candidates_passes_category_overrides(mock_site):
@@ -234,33 +228,15 @@ def test_fetch_candidates_passes_category_overrides(mock_site):
     is called with an exclude_categories override."""
     picker = ArticlePicker(site=mock_site)
 
-    sports_category = Mock()
-    sports_category.name = "Category:Sports"
-    excluded_page = Mock()
-    excluded_page.name = "Excluded Article"
-    excluded_page.redirect = False
-    excluded_page.namespace = 0
-    excluded_page.protection = {}
-    excluded_page.revision = "1"
-    excluded_page.text = Mock(return_value="A claim about the subject.{{Citation needed}}")
-    excluded_page.categories = Mock(return_value=[sports_category])
-
-    history_category = Mock()
-    history_category.name = "Category:History"
-    included_page = Mock()
-    included_page.name = "Included Article"
-    included_page.redirect = False
-    included_page.namespace = 0
-    included_page.protection = {}
-    included_page.revision = "2"
-    included_page.text = Mock(return_value="A fresh and notable claim about the subject.{{Citation needed}}")
-    included_page.categories = Mock(return_value=[history_category])
+    excluded_page = _make_page("Excluded Article", cats=["Sports"], text="A claim about the subject.{{Citation needed}}")
+    included_page = _make_page("Included Article", cats=["History"], text="A fresh and notable claim about the subject.{{Citation needed}}", revision="2")
 
     mock_site.pages = {"Category:All_articles_with_unsourced_statements": [excluded_page, included_page]}
 
     titles = [c.title for c in picker.fetch_candidates(limit=5, exclude_categories=["Sports"])]
     assert "Excluded Article" not in titles
     assert "Included Article" in titles
+    included_page.categories.assert_not_called()  # batch data supplies categories (#18)
 
 
 def test_expand_categories_replaces_name_with_discovery_file(monkeypatch):
@@ -504,7 +480,11 @@ def test_is_candidate_blp_default_flag_rejects_without_include_filter(picker):
     assert reason == "BLP article"
 
 
-def _make_candidate_page(name, revision="1"):
+def _make_candidate_page(name, revision="1", categories=None):
+    """Categories are supplied via the batch path (page._info), matching the
+    real generator=categorymembers&prop=categories response (#18) — page.categories()
+    is stubbed to a Mock() so any accidental call is easy to notice/assert against."""
+    cats = categories if categories is not None else []
     page = Mock()
     page.name = name
     page.redirect = False
@@ -512,7 +492,29 @@ def _make_candidate_page(name, revision="1"):
     page.protection = {}
     page.revision = revision
     page.text = Mock(return_value=f"{name} is notable for something.{{{{Citation needed}}}}")
-    page.categories = Mock(return_value=["Test"])
+    page._info = {"categories": [{"ns": 14, "title": f"Category:{c}"} for c in cats]}
+    page.categories = Mock()
+    return page
+
+
+def _make_page(name, *, cats, text="A fresh and notable claim about the subject.{{Citation needed}}", ns=0, redirect=False, protection=None, batch=True, revision="1"):
+    """Build a page double for either category-resolution route (#18): the
+    batch path (page._info carries categories, page.categories() must not be
+    called) or the fallback path (page._info is unusable, page.categories()
+    is stubbed as get_categories() expects — objects with a .name attribute)."""
+    page = Mock()
+    page.name = name
+    page.redirect = redirect
+    page.namespace = ns
+    page.protection = protection or {}
+    page.revision = revision
+    page.text = Mock(return_value=text)
+    if batch:
+        page._info = {"categories": [{"ns": 14, "title": f"Category:{c}"} for c in cats]}
+        page.categories = Mock()  # must NOT be called on the batch path
+    else:
+        page._info = {}  # force fallback
+        page.categories = Mock(return_value=[_mock_category(f"Category:{c}") for c in cats])
     return page
 
 
@@ -665,6 +667,109 @@ def test_batch_categories_malformed_entry_returns_none(picker):
     assert picker._batch_categories(page) is None
 
 
+def test_offtopic_candidate_rejected_without_text_fetch(picker):
+    """AC2.1: an off-topic candidate (batch categories miss the active include
+    filter) is rejected before page.text() is ever called — the whole point of
+    running the topic filter first (#18)."""
+    page = _make_page("Off Topic", cats=["Sports"])
+
+    ok, reason = picker.is_candidate(page, include_categories=["History"])
+
+    assert ok is False
+    assert reason == "not in included categories"
+    page.text.assert_not_called()
+
+
+def test_ontopic_candidate_proceeds_to_text_fetch(picker):
+    """AC2.2: an on-topic candidate (batch categories match the include filter)
+    still reaches page.text() as before; the no-filter case also proceeds."""
+    matching_page = _make_page("On Topic", cats=["History"])
+    ok, _ = picker.is_candidate(matching_page, include_categories=["History"])
+    assert ok is True
+    matching_page.text.assert_called_once()
+
+    no_filter_page = _make_page("No Filter", cats=["Anything"])
+    ok, _ = picker.is_candidate(no_filter_page, include_categories=[])
+    assert ok is True
+    no_filter_page.text.assert_called_once()
+
+
+def test_ontopic_accept_never_calls_page_categories(picker):
+    """AC3.1: an accepted candidate reuses the batch-provided categories and
+    never triggers the separate page.categories() round trip."""
+    page = _make_page("Accepted Article", cats=["History"])
+
+    ok, _ = picker.is_candidate(page)
+
+    assert ok is True
+    page.categories.assert_not_called()
+
+
+def test_batch_and_fallback_categories_are_content_identical(picker):
+    """AC3.2: the batch-read path and the per-page fallback path produce
+    content-identical category names (prefix-stripped, order-independent) for
+    the same underlying categories."""
+    batch_page = _make_page("Batch", cats=["History", "Physics"], batch=True)
+    fallback_page = _make_page("Fallback", cats=["History", "Physics"], batch=False)
+
+    assert set(picker._batch_categories(batch_page)) == set(picker.get_categories(fallback_page))
+
+
+def test_fallback_used_when_info_missing_categories(picker):
+    """AC4.1: _info missing the 'categories' key falls back to get_categories(),
+    calling page.categories() exactly once, and still reaches the same decision
+    a complete batch list would have produced."""
+    page = _make_page("Fallback Missing", cats=["History"], batch=False)
+
+    ok, _ = picker.is_candidate(page, include_categories=["History"])
+
+    assert ok is True
+    page.categories.assert_called_once()
+
+
+def test_fallback_used_on_clcontinue_truncation(picker):
+    """AC4.1: a clcontinue marker on _info signals truncated batch data — must
+    fall back to get_categories() rather than filter on a partial list."""
+    page = _make_page("Truncated", cats=["History"], batch=True)
+    page._info["clcontinue"] = "some-continue-token"
+    page.categories = Mock(return_value=[_mock_category("Category:History")])
+
+    ok, _ = picker.is_candidate(page, include_categories=["History"])
+
+    assert ok is True
+    page.categories.assert_called_once()
+
+
+def test_fallback_result_matches_full_list_decision(picker):
+    """AC4.2: the fallback never silently flips a decision vs. the full-list
+    result — a page whose full category set passes the include filter still
+    passes via the fallback, and one that should be rejected still is."""
+    passing_page = _make_page("Passes", cats=["History"], batch=False)
+    ok, _ = picker.is_candidate(passing_page, include_categories=["History"])
+    assert ok is True
+
+    rejecting_page = _make_page("Rejected", cats=["Sports"], batch=False)
+    ok, _ = picker.is_candidate(rejecting_page, include_categories=["History"])
+    assert ok is False
+
+
+def test_no_topic_filter_output_and_requests_unchanged(mock_site):
+    """AC5.1: with no include/exclude configured, output and request pattern
+    are unchanged from before #18 — page.text() is still called (needed for
+    citation-needed), page.categories() is not (the batch data supplies
+    categories), and the yielded candidate matches expectations."""
+    picker = ArticlePicker(site=mock_site)
+    page = _make_page("Plain Article", cats=["Anything"])
+    mock_site.pages = {"Category:All_articles_with_unsourced_statements": [page]}
+
+    candidates = list(picker.fetch_candidates(limit=5))
+
+    assert [c.title for c in candidates] == ["Plain Article"]
+    assert candidates[0].categories == ["Anything"]
+    page.text.assert_called_once()
+    page.categories.assert_not_called()
+
+
 @pytest.fixture
 def restore_config():
     """Config is global (get_config/set_config); restore it after tests that override it."""
@@ -738,14 +843,14 @@ def test_fetch_candidates_ranks_by_learned_rate(mock_site, tmp_path, restore_con
     set_config(config)
 
     picker = ArticlePicker(site=mock_site, seen_store=store)
-    news_page = _make_candidate_page("News Article")
-    news_page.categories = Mock(return_value=[_mock_category("news-ish")])
-    journal_page = _make_candidate_page("Journal Article")
-    journal_page.categories = Mock(return_value=[_mock_category("journal-ish")])
+    news_page = _make_candidate_page("News Article", categories=["news-ish"])
+    journal_page = _make_candidate_page("Journal Article", categories=["journal-ish"])
     mock_site.pages = {"Category:All_articles_with_unsourced_statements": [journal_page, news_page]}
 
     titles = [c.title for c in picker.fetch_candidates(limit=1)]
     assert titles == ["News Article"]
+    news_page.categories.assert_not_called()
+    journal_page.categories.assert_not_called()
 
 
 def test_fetch_candidates_disabled_feedback_is_category_order(mock_site, tmp_path, restore_config):
@@ -761,14 +866,14 @@ def test_fetch_candidates_disabled_feedback_is_category_order(mock_site, tmp_pat
     set_config(config)
 
     picker = ArticlePicker(site=mock_site, seen_store=store)
-    journal_page = _make_candidate_page("Journal Article")
-    journal_page.categories = Mock(return_value=[_mock_category("journal-ish")])
-    news_page = _make_candidate_page("News Article")
-    news_page.categories = Mock(return_value=[_mock_category("news-ish")])
+    journal_page = _make_candidate_page("Journal Article", categories=["journal-ish"])
+    news_page = _make_candidate_page("News Article", categories=["news-ish"])
     mock_site.pages = {"Category:All_articles_with_unsourced_statements": [journal_page, news_page]}
 
     titles = [c.title for c in picker.fetch_candidates(limit=2)]
     assert titles == ["Journal Article", "News Article"]
+    journal_page.categories.assert_not_called()
+    news_page.categories.assert_not_called()
 
 
 def test_fetch_candidates_missing_db_matches_category_order(mock_site, tmp_path, restore_config):
