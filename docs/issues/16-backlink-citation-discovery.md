@@ -1,8 +1,14 @@
 # Issue #16 — Agent tool: discover citations via backlinking Wikipedia articles
 
-**Status:** Ready
+**Status:** In Progress
 **Complexity:** Complex
 **GitHub:** https://github.com/jackal1991/wiki-cite/issues/16
+
+## Worktree
+
+- branch: feat/16-backlink-citation-discovery
+- path: .worktrees/16-backlink-citation-discovery
+- created: 2026-07-18
 
 ## Summary
 Give the agent's search loop a new tool that checks *other* Wikipedia articles —
