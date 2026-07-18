@@ -113,3 +113,55 @@ def test_dimension_rates_on_corrupt_db_returns_empty(tmp_path):
     assert store.dimension_rates("source_type") == {}
     assert store.is_seen("Anything") is False
     assert store.record_outcome("Anything", "1", "skipped") is None
+
+
+def test_pending_revert_candidates_returns_recent_pushed(tmp_path):
+    store = SeenStore(tmp_path / "seen.db")
+    store.record_outcome("Groveland Four", "123", "pushed")
+
+    assert store.pending_revert_candidates(horizon_days=7) == [("Groveland Four", "123")]
+
+
+def test_pending_revert_candidates_excludes_reverted(tmp_path):
+    store = SeenStore(tmp_path / "seen.db")
+    store.record_outcome("Groveland Four", "123", "pushed")
+    store.record_outcome("Groveland Four", "123", "reverted")
+
+    assert store.pending_revert_candidates(horizon_days=7) == []
+
+
+def test_pending_revert_candidates_excludes_expired(tmp_path):
+    path = tmp_path / "seen.db"
+    store = SeenStore(path)
+    store.record_outcome("Groveland Four", "123", "pushed")
+
+    # Age the row past any horizon by rewriting recorded_at directly.
+    conn = sqlite3.connect(str(path))
+    conn.execute("UPDATE outcomes SET recorded_at = '2000-01-01T00:00:00' WHERE article_title = 'Groveland Four'")
+    conn.commit()
+    conn.close()
+
+    assert store.pending_revert_candidates(horizon_days=7) == []
+
+
+def test_pending_revert_candidates_excludes_null_revid(tmp_path):
+    store = SeenStore(tmp_path / "seen.db")
+    store.record_outcome("Groveland Four", None, "pushed")
+
+    assert store.pending_revert_candidates(horizon_days=7) == []
+
+
+def test_pending_revert_candidates_dedupes(tmp_path):
+    store = SeenStore(tmp_path / "seen.db")
+    store.record_outcome("Groveland Four", "123", "pushed", edit_type="citation_added")
+    store.record_outcome("Groveland Four", "123", "pushed", edit_type="grammar_fix")
+
+    assert store.pending_revert_candidates(horizon_days=7) == [("Groveland Four", "123")]
+
+
+def test_pending_revert_candidates_on_missing_store_returns_empty(tmp_path):
+    path = tmp_path / "corrupt.db"
+    path.write_bytes(b"not a real sqlite database file")
+
+    store = SeenStore(path)
+    assert store.pending_revert_candidates(horizon_days=7) == []
