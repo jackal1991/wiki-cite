@@ -1,8 +1,9 @@
 # Issue #14 — Add "Next in queue →" link on the review page
 
-**Status:** In Progress
+**Status:** In Review
 **Complexity:** Standard
 **GitHub:** https://github.com/jackal1991/wiki-cite/issues/14
+**PR:** https://github.com/jackal1991/wiki-cite/pull/20
 
 ## Worktree
 
