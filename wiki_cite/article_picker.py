@@ -472,27 +472,38 @@ class ArticlePicker:
         if self.config.article_selection.exclude_protected and self.is_protected(page):
             return False, "protected", None, None
 
-        # Get page text and categories
+        # Resolve categories WITHOUT a per-page fetch when the batch carried them
+        # (prop=categories, #18); fall back to a per-page page.categories() call only
+        # when the batch data is absent/truncated/unusable.
+        categories = self._batch_categories(page)
+        if categories is None:
+            logger.warning("Batch categories unavailable for %r; falling back to per-page fetch", getattr(page, "name", "?"))
+            categories = self.get_categories(page)
+
+        include = include_categories if include_categories is not None else self.config.article_selection.include_categories
+        exclude = exclude_categories if exclude_categories is not None else self.config.article_selection.exclude_categories
+
+        # Topic filter runs BEFORE any wikitext fetch: an off-topic reject costs zero
+        # per-page requests (categories came from the batch), and even on-topic pages
+        # skip the separate page.categories() call.
+        ok, reason = self.category_filter(categories, include, exclude)
+        if not ok:
+            return False, reason, None, categories
+
+        # On-topic: now fetch wikitext (unavoidable — needed for the BLP check, body
+        # line count, and {{Citation needed}} extraction).
         try:
             page_text = page.text()
         except Exception as e:
-            return False, f"error reading page: {e}", None, None
+            return False, f"error reading page: {e}", None, categories
 
         if not page_text:
-            return False, "empty page", None, None
+            return False, "empty page", None, categories
 
         # Cost guard: don't spend a Claude call on a very long article.
         max_chars = self.config.article_selection.max_wikitext_chars
         if max_chars and len(page_text) > max_chars:
-            return False, f"too long to analyze ({len(page_text)} chars)", page_text, None
-
-        categories = self.get_categories(page)
-
-        include = include_categories if include_categories is not None else self.config.article_selection.include_categories
-        exclude = exclude_categories if exclude_categories is not None else self.config.article_selection.exclude_categories
-        ok, reason = self.category_filter(categories, include, exclude)
-        if not ok:
-            return False, reason, page_text, categories
+            return False, f"too long to analyze ({len(page_text)} chars)", page_text, categories
 
         # BLP is excluded by default. A deliberately-scoped topic filter may opt out via
         # guardrails.relax_blp_when_topic_filtered — but ONLY when an include filter is
