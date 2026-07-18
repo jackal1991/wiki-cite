@@ -551,8 +551,16 @@ class ArticlePicker:
             return
 
         start_prefix = self.config.article_selection.category_start_prefix
-        if start_prefix and hasattr(cat_page, "args"):
-            cat_page.args["gcmstartsortkeyprefix"] = start_prefix
+        if hasattr(cat_page, "args"):
+            if start_prefix:
+                cat_page.args["gcmstartsortkeyprefix"] = start_prefix
+            # Piggyback each candidate's category membership onto the batch
+            # generator=categorymembers query so the topic filter can run before any
+            # per-page fetch (see issue #18). prop is a single pipe-delimited value, so
+            # overwriting the default 'info|imageinfo' with the superset is correct and
+            # preserves the info|imageinfo|protection data the rest of the flow relies on.
+            cat_page.args["prop"] = "info|imageinfo|categories"
+            cat_page.args["cllimit"] = "max"
 
         # Resolve and expand the include/exclude lists once per fetch (not once per page):
         # each configured name that has a static discovery file is widened to its

@@ -562,6 +562,54 @@ def test_fetch_candidates_no_start_prefix_leaves_args_untouched(mock_site, resto
     assert "gcmstartsortkeyprefix" not in cat_page.args
 
 
+def test_fetch_candidates_batch_query_requests_categories(mock_site, restore_config):
+    """fetch_candidates piggybacks prop=categories&cllimit=max onto the batch
+    generator=categorymembers query so category membership arrives with the
+    initial batch (issue #18) instead of a later per-page request."""
+    picker = ArticlePicker(site=mock_site)
+    cat_page = Mock()
+    cat_page.args = {}
+    cat_page.__iter__ = Mock(return_value=iter([]))
+    mock_site.pages = {"Category:All_articles_with_unsourced_statements": cat_page}
+
+    list(picker.fetch_candidates(limit=3))
+
+    assert cat_page.args["prop"] == "info|imageinfo|categories"
+    assert cat_page.args["cllimit"] == "max"
+
+
+def test_fetch_candidates_batch_query_args_coexist_with_start_prefix(mock_site, restore_config):
+    """The prop/cllimit batch args and gcmstartsortkeyprefix must coexist —
+    the categories piggyback is independent of whether a start prefix is
+    configured."""
+    config = get_config()
+    config.article_selection.category_start_prefix = "A"
+    set_config(config)
+
+    picker = ArticlePicker(site=mock_site)
+    cat_page = Mock()
+    cat_page.args = {}
+    cat_page.__iter__ = Mock(return_value=iter([]))
+    mock_site.pages = {"Category:All_articles_with_unsourced_statements": cat_page}
+
+    list(picker.fetch_candidates(limit=3))
+
+    assert cat_page.args["gcmstartsortkeyprefix"] == "A"
+    assert cat_page.args["prop"] == "info|imageinfo|categories"
+    assert cat_page.args["cllimit"] == "max"
+
+
+def test_fetch_candidates_batch_query_no_args_attr_is_safe(mock_site):
+    """A cat_page without a mutable .args (a bare list, as used by other
+    fetch_candidates tests) must not raise when the categories piggyback runs."""
+    picker = ArticlePicker(site=mock_site)
+    mock_site.pages = {"Category:All_articles_with_unsourced_statements": []}
+
+    result = list(picker.fetch_candidates(limit=3))
+
+    assert result == []
+
+
 @pytest.fixture
 def restore_config():
     """Config is global (get_config/set_config); restore it after tests that override it."""
