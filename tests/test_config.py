@@ -25,6 +25,11 @@ def test_agent_config_defaults():
     assert config.search_results_per_query == 3
 
 
+def test_agent_config_max_backlink_pages_default():
+    """AC2/AC3.3/AC4 cost guard: max_backlink_pages_to_check defaults to 10."""
+    assert AgentConfig().max_backlink_pages_to_check == 10
+
+
 def test_guardrails_config_defaults():
     """Test guardrails configuration defaults."""
     config = GuardrailsConfig()

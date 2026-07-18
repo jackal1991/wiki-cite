@@ -336,3 +336,123 @@ def test_find_sources_for_claim_returns_sorted(source_finder):
 
         # Generally reliable should come first
         assert sources[0].reliability == ReliabilityRating.GENERALLY_RELIABLE
+
+
+class _FakeBacklinkPage:
+    """Stand-in for an mwclient Page yielded by page.backlinks(): only `.name` and
+    `.text()` are used by fetch_backlink_pages."""
+
+    def __init__(self, name: str, text: str = ""):
+        self.name = name
+        self._text = text
+
+    def text(self):
+        if isinstance(self._text, Exception):
+            raise self._text
+        return self._text
+
+
+class _FakeArticlePage:
+    """Stand-in for `site.pages[title]`: `.backlinks(...)` returns the configured list."""
+
+    def __init__(self, backlinks: list):
+        self._backlinks = backlinks
+
+    def backlinks(self, namespace=None, filterredir=None, **kwargs):
+        return iter(self._backlinks)
+
+
+def _make_backlink_site(title: str, backlinks: list):
+    """Build a fake mwclient Site whose `.pages[title]` looks up the given backlinks."""
+    site = Mock()
+    site.pages = {title: _FakeArticlePage(backlinks)}
+    return site
+
+
+def _cite(url: str) -> str:
+    """Minimal wikitext embedding a single {{cite web}} url= citation."""
+    return f"<ref>{{{{cite web |title=Source |url={url}}}}}</ref>"
+
+
+def test_find_backlink_sources_caps_pages(source_finder, monkeypatch):
+    """AC2.1: at most config.agent.max_backlink_pages_to_check backlinking pages are
+    scanned, so only their URLs can ever surface as candidates."""
+    monkeypatch.setattr(source_finder.config.agent, "max_backlink_pages_to_check", 2)
+    backlinks = [_FakeBacklinkPage(f"Page {i}", _cite(f"https://example.com/{i}")) for i in range(5)]
+    site = _make_backlink_site("Article", backlinks)
+
+    sources = source_finder.find_backlink_sources("Article", site=site)
+
+    assert [s.url for s in sources] == ["https://example.com/0", "https://example.com/1"]
+
+
+def test_find_backlink_sources_skips_failed_page(source_finder):
+    """AC2.2: a backlinking page whose fetch fails is skipped; candidates from the
+    other pages are still surfaced."""
+    backlinks = [
+        _FakeBacklinkPage("Good A", _cite("https://example.com/a")),
+        _FakeBacklinkPage("Bad", RuntimeError("network error")),
+        _FakeBacklinkPage("Good B", _cite("https://example.com/b")),
+    ]
+    site = _make_backlink_site("Article", backlinks)
+
+    sources = source_finder.find_backlink_sources("Article", site=site)
+
+    assert [s.url for s in sources] == ["https://example.com/a", "https://example.com/b"]
+
+
+def test_find_backlink_sources_excludes_self_reference(source_finder):
+    """AC2.3: the edited article is never counted among its own backlinks, so its
+    own citations never leak in as candidates for itself."""
+    backlinks = [
+        _FakeBacklinkPage("Some_Article", _cite("https://example.com/self-only")),
+        _FakeBacklinkPage("Other Page", _cite("https://example.com/other")),
+    ]
+    site = _make_backlink_site("Some Article", backlinks)
+
+    sources = source_finder.find_backlink_sources("Some Article", site=site)
+
+    assert [s.url for s in sources] == ["https://example.com/other"]
+
+
+def test_find_backlink_sources_dedups_across_pages(source_finder):
+    """AC3.3: the same external URL cited on two different backlinking pages is
+    only surfaced once."""
+    backlinks = [
+        _FakeBacklinkPage("Page A", _cite("https://example.com/shared")),
+        _FakeBacklinkPage("Page B", _cite("https://example.com/shared")),
+    ]
+    site = _make_backlink_site("Article", backlinks)
+
+    sources = source_finder.find_backlink_sources("Article", site=site)
+
+    assert [s.url for s in sources] == ["https://example.com/shared"]
+
+
+def test_find_backlink_sources_reliability_parity(source_finder):
+    """AC4.1: every surfaced URL passes through the same check_reliability() as
+    other search tools, returning a Source with reliability set and matching shape."""
+    backlinks = [_FakeBacklinkPage("Page A", _cite("https://www.nytimes.com/article"))]
+    site = _make_backlink_site("Article", backlinks)
+
+    sources = source_finder.find_backlink_sources("Article", site=site)
+
+    assert len(sources) == 1
+    source = sources[0]
+    assert source.url == "https://www.nytimes.com/article"
+    assert source.source_type == SourceType.WEB
+    assert source.reliability == ReliabilityRating.GENERALLY_RELIABLE
+
+
+def test_find_backlink_sources_wikipedia_url_not_exempted(source_finder):
+    """AC4.2: a wikipedia.org URL is checked by check_reliability() like any other
+    domain, never special-cased into automatic acceptance."""
+    backlinks = [_FakeBacklinkPage("Page A", _cite("https://en.wikipedia.org/wiki/Some_Topic"))]
+    site = _make_backlink_site("Article", backlinks)
+
+    sources = source_finder.find_backlink_sources("Article", site=site)
+
+    assert len(sources) == 1
+    source = sources[0]
+    assert source.reliability == source_finder.check_reliability(source.url)
+    assert source.reliability != ReliabilityRating.GENERALLY_RELIABLE

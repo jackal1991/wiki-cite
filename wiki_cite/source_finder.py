@@ -8,12 +8,14 @@ import time
 from collections.abc import Callable
 from urllib.parse import urlparse
 
+import mwclient
 import mwparserfromhell
 import requests
 from bs4 import BeautifulSoup
 from requests.adapters import HTTPAdapter
 from urllib3.util import Retry
 
+from wiki_cite.article_picker import _build_session, fetch_backlink_pages
 from wiki_cite.config import get_config
 from wiki_cite.models import ReliabilityRating, Source, SourceType
 
@@ -193,6 +195,51 @@ class SourceFinder:
 
         except Exception:
             return ReliabilityRating.POTENTIALLY_UNRELIABLE
+
+    def find_backlink_sources(self, article_title: str, *, site=None) -> list[Source]:
+        """Discover candidate citation URLs from articles that link to ``article_title``.
+
+        Fetches up to ``config.agent.max_backlink_pages_to_check`` backlinking pages
+        (fetch_backlink_pages), extracts ALL citation URLs from each
+        (extract_all_citation_urls), deduplicates across every scanned page, and runs
+        each distinct URL through the SAME check_reliability() the other search tools
+        use — returning Source objects identical in shape to search_web results. A
+        discovered URL is only ever a *candidate*: it is never accepted as a source
+        here, and never exempted from reliability checking (including any
+        wikipedia.org URL that slips through — WP:CIRCULAR is enforced by
+        check_reliability parity + the system prompt, not by a carve-out).
+
+        Args:
+            article_title: the article currently being edited.
+            site: injected mwclient Site (tests pass a mock); when None a real
+                en.wikipedia.org Site is built lazily with the pooled retry session.
+
+        Returns:
+            Candidate Source objects, one per distinct discovered URL, in first-seen order.
+        """
+        if site is None:
+            site = mwclient.Site("en.wikipedia.org", pool=_build_session(self.config.wikipedia.user_agent))
+
+        max_pages = self.config.agent.max_backlink_pages_to_check
+        pages = fetch_backlink_pages(site, article_title, max_pages)
+
+        seen: set[str] = set()
+        sources: list[Source] = []
+        for _page_title, wikitext in pages:
+            for url in extract_all_citation_urls(wikitext):
+                if url in seen:
+                    continue
+                seen.add(url)
+                sources.append(
+                    Source(
+                        title=urlparse(url).netloc or url,
+                        url=url,
+                        source_type=SourceType.WEB,
+                        reliability=self.check_reliability(url),
+                    )
+                )
+
+        return sources
 
     def verify_url_exists(self, url: str) -> bool:
         """Verify that a URL exists and is accessible.

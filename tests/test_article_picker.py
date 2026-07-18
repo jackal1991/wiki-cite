@@ -7,7 +7,7 @@ import sqlite3
 import pytest
 from unittest.mock import Mock, patch
 
-from wiki_cite.article_picker import ArticlePicker, CandidateScorer, _build_session, build_focused_excerpt, crawl_subcategories
+from wiki_cite.article_picker import ArticlePicker, CandidateScorer, _build_session, build_focused_excerpt, crawl_subcategories, fetch_backlink_pages
 from wiki_cite.config import Config, get_config, set_config
 from wiki_cite.models import CandidateArticle
 from wiki_cite.seen_store import SeenStore
@@ -816,3 +816,92 @@ def test_crawl_subcategories_strips_category_prefix():
 
     assert result == ["Child", "Root"]
     assert all(not name.startswith("Category:") for name in result)
+
+
+class _FakeBacklinkPage:
+    """Stand-in for an mwclient Page yielded by page.backlinks(): only `.name` and
+    `.text()` are used by fetch_backlink_pages."""
+
+    def __init__(self, name: str, text: str | Exception = ""):
+        self.name = name
+        self._text = text
+
+    def text(self):
+        if isinstance(self._text, Exception):
+            raise self._text
+        return self._text
+
+
+class _FakeArticlePage:
+    """Stand-in for `site.pages[title]`: `.backlinks(...)` returns the configured
+    list, or raises if given an Exception."""
+
+    def __init__(self, backlinks: list[_FakeBacklinkPage] | Exception):
+        self._backlinks = backlinks
+
+    def backlinks(self, namespace=None, filterredir=None, **kwargs):
+        if isinstance(self._backlinks, Exception):
+            raise self._backlinks
+        return iter(self._backlinks)
+
+
+def _make_backlink_site(title: str, backlinks: list[_FakeBacklinkPage] | Exception):
+    """Build a fake mwclient Site whose `.pages[title]` looks up the given backlinks."""
+    site = Mock()
+    site.pages = {title: _FakeArticlePage(backlinks)}
+    return site
+
+
+def test_fetch_backlink_pages_caps_and_is_sequential():
+    """AC2.1: the scan stops once max_pages successfully-fetched pages are collected."""
+    backlinks = [_FakeBacklinkPage(f"Page {i}", f"text {i}") for i in range(5)]
+    site = _make_backlink_site("Article", backlinks)
+
+    result = fetch_backlink_pages(site, "Article", max_pages=2)
+
+    assert result == [("Page 0", "text 0"), ("Page 1", "text 1")]
+
+
+def test_fetch_backlink_pages_skips_failed_page(caplog):
+    """AC2.2: a page whose .text() fetch fails is logged and skipped; the scan
+    continues with the rest instead of aborting."""
+    backlinks = [
+        _FakeBacklinkPage("Good A", "text a"),
+        _FakeBacklinkPage("Bad", RuntimeError("network error")),
+        _FakeBacklinkPage("Good B", "text b"),
+    ]
+    site = _make_backlink_site("Article", backlinks)
+
+    with caplog.at_level(logging.WARNING):
+        result = fetch_backlink_pages(site, "Article", max_pages=2)
+
+    assert result == [("Good A", "text a"), ("Good B", "text b")]
+    assert any("Bad" in record.message for record in caplog.records)
+
+
+def test_fetch_backlink_pages_returns_empty_when_backlinks_call_fails(caplog):
+    """AC2.2: a failed page.backlinks() call itself is logged and treated as no
+    backlinks obtainable, not an error to the caller."""
+    site = _make_backlink_site("Article", RuntimeError("API error"))
+
+    with caplog.at_level(logging.WARNING):
+        result = fetch_backlink_pages(site, "Article", max_pages=10)
+
+    assert result == []
+    assert any("Article" in record.message for record in caplog.records)
+
+
+def test_fetch_backlink_pages_excludes_self():
+    """AC2.3: the edited article is never counted among its own backlinks (checked
+    with underscore/case normalization), and excluding it doesn't consume a max_pages
+    slot."""
+    backlinks = [
+        _FakeBacklinkPage("Some_Article", "self text"),
+        _FakeBacklinkPage("Other A", "text a"),
+        _FakeBacklinkPage("Other B", "text b"),
+    ]
+    site = _make_backlink_site("Some Article", backlinks)
+
+    result = fetch_backlink_pages(site, "Some Article", max_pages=1)
+
+    assert result == [("Other A", "text a")]
