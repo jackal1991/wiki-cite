@@ -408,6 +408,26 @@ def test_reject_proposal_unknown_id_404(app):
     assert response.status_code == 404
 
 
+def test_push_persists_new_revid(app, tmp_path):
+    """A successful push carries the post-push newrevid into the "pushed" outcome rows."""
+    proposal = make_proposal()
+    for edit in proposal.edits:
+        edit.approved = True
+    app.proposals[proposal.id] = proposal
+    app.push_service.push_edits = Mock(return_value=(True, "ok", "999"))
+    client = app.test_client()
+
+    response = client.post(f"/api/proposals/{proposal.id}/push")
+
+    assert response.status_code == 200
+    assert response.get_json()["success"] is True
+
+    store = SeenStore(str(tmp_path / "seen.db"))
+    rows = store._conn.execute("SELECT revision_id FROM outcomes WHERE outcome = 'pushed'").fetchall()
+    assert rows
+    assert all(revision_id == "999" for (revision_id,) in rows)
+
+
 def test_push_frees_a_slot(app):
     seed_pending(app, 9)
     pushed = make_proposal()

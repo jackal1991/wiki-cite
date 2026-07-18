@@ -83,7 +83,7 @@ class WikipediaPushService:
             print(f"Error checking for conflicts: {e}")
             return True  # Assume conflict on error to be safe
 
-    def push_edits(self, proposal: EditProposal, modified_text: str) -> tuple[bool, str]:
+    def push_edits(self, proposal: EditProposal, modified_text: str) -> tuple[bool, str, str | None]:
         """Push approved edits to Wikipedia.
 
         Args:
@@ -91,33 +91,36 @@ class WikipediaPushService:
             modified_text: The modified article text to push
 
         Returns:
-            Tuple of (success, message)
+            Tuple of (success, message, new_revision_id). new_revision_id is the
+            post-push revision id mwclient's save() returned, or None on any
+            failure path or a null edit (no content change).
         """
         # Check rate limiting
         if not self.rate_limiter.can_edit():
-            return False, "Rate limit exceeded. Please wait before making more edits."
+            return False, "Rate limit exceeded. Please wait before making more edits.", None
 
         # Check for edit conflicts
         if self.check_for_conflicts(proposal.article.title, proposal.article.revision_id):
             return (
                 False,
                 "Edit conflict: article has been modified since analysis. Please re-analyze.",
+                None,
             )
 
         # Generate edit summary
         edit_summary = proposal.get_edit_summary()
         if not edit_summary:
-            return False, "No approved edits to push"
+            return False, "No approved edits to push", None
 
         # Get the page
         try:
             page = self.site.pages[proposal.article.title]
         except Exception as e:
-            return False, f"Failed to access page: {e}"
+            return False, f"Failed to access page: {e}", None
 
         # Push the edit
         try:
-            page.save(
+            edit_result = page.save(
                 modified_text,
                 summary=edit_summary,
                 minor=True,  # Mark as minor edit
@@ -127,10 +130,13 @@ class WikipediaPushService:
             # Record the edit for rate limiting
             self.rate_limiter.record_edit()
 
-            return True, f"Successfully pushed edits. Edit summary: {edit_summary}"
+            new_revid = edit_result.get("newrevid") if isinstance(edit_result, dict) else None
+            new_revid = str(new_revid) if new_revid is not None else None
+
+            return True, f"Successfully pushed edits. Edit summary: {edit_summary}", new_revid
 
         except Exception as e:
-            return False, f"Failed to push edits: {e}"
+            return False, f"Failed to push edits: {e}", None
 
     def preview_diff(self, proposal: EditProposal, modified_text: str) -> str:
         """Generate a preview diff of changes.

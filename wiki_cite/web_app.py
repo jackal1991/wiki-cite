@@ -54,6 +54,7 @@ def create_app() -> Flask:
     article_picker = ArticlePicker(seen_store=seen_store)
     agent = ClaudeAgent()
     push_service = WikipediaPushService()
+    app.push_service = push_service  # test-only seam for monkeypatching push_edits
     source_finder = SourceFinder()
 
     @app.route("/")
@@ -458,7 +459,7 @@ def create_app() -> Flask:
         modified_text = agent.apply_edits(proposal.article, approved_edits)
 
         # Push to Wikipedia
-        success, message = push_service.push_edits(proposal, modified_text)
+        success, message, new_revid = push_service.push_edits(proposal, modified_text)
 
         if success:
             proposal.status = "pushed"
@@ -467,7 +468,7 @@ def create_app() -> Flask:
             for edit in approved_edits:
                 seen_store.record_outcome(
                     proposal.article.title,
-                    proposal.article.revision_id,
+                    new_revid,
                     "pushed",
                     edit_type=edit.edit_type.value,
                     confidence=edit.confidence,
