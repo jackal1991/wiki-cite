@@ -1,8 +1,9 @@
 # Issue #16 — Agent tool: discover citations via backlinking Wikipedia articles
 
-**Status:** In Progress
+**Status:** In Review
 **Complexity:** Complex
 **GitHub:** https://github.com/jackal1991/wiki-cite/issues/16
+**PR:** https://github.com/jackal1991/wiki-cite/pull/22
 
 ## Worktree
 
