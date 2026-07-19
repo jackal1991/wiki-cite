@@ -217,7 +217,9 @@ def create_app() -> Flask:
 
     @app.route("/api/proposals")
     def get_proposals():
-        """Get all proposals."""
+        """Get unresolved (status == 'pending') proposals for the dashboard queue.
+        Pushed/rejected proposals are resolved and stay reachable via
+        GET /api/proposals/<id> for the review page, but drop out of this list."""
         return jsonify(
             [
                 {
@@ -230,6 +232,7 @@ def create_app() -> Flask:
                     "created_at": p.created_at.isoformat(),
                 }
                 for p in proposals.values()
+                if p.status == "pending"
             ]
         )
 
