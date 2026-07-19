@@ -345,6 +345,50 @@ class ArticlePicker:
         except Exception:
             return []
 
+    def _batch_categories(self, page) -> list[str] | None:
+        """Category names for ``page`` taken from the batch generator response
+        (``page._info['categories']``, present when the batch query included
+        ``prop=categories`` — see #18), with the ``Category:`` prefix stripped to
+        match ``get_categories()``.
+
+        Returns ``None`` to signal the caller to fall back to a per-page
+        ``get_categories(page)`` call, when the batch data is absent, unusable, or
+        malformed:
+
+          * no ``_info`` dict, or ``_info`` is not a real dict (e.g. a bare test
+            double), or no ``categories`` key;
+          * a ``clcontinue`` marker directly on ``_info`` — defensive only; live
+            verification against the real API shows MediaWiki's continuation
+            token for a truncated categories sub-query is never embedded
+            per-page like this, it lands top-level on the query's own
+            ``continue`` object instead (see the ``clcontinue`` handling in
+            ``fetch_candidates``'s pool loop). ``fetch_candidates`` handles
+            that real case via ``trust_batch_categories``, not this check;
+          * ``categories`` is not a list of ``{"title": ...}`` dicts.
+
+        Note this method alone CANNOT detect a batch truncated by ``cllimit``:
+        a page whose categories sub-list was cut off mid-page still has a
+        well-formed (but silently partial) ``categories`` list in its own
+        ``_info``, with no per-page signal that it's incomplete. Callers that
+        can see the query-level continuation state (``fetch_candidates``) must
+        detect that and pass ``trust_batch_categories=False`` to
+        ``_evaluate_candidate`` instead of relying on this method alone.
+        """
+        info = getattr(page, "_info", None)
+        if not isinstance(info, dict):
+            return None
+        if info.get("clcontinue") is not None:
+            return None
+        raw = info.get("categories")
+        if not isinstance(raw, list):
+            return None
+        names: list[str] = []
+        for item in raw:
+            if not isinstance(item, dict) or "title" not in item:
+                return None  # malformed entry: don't filter on a partial/garbled list
+            names.append(item["title"].replace("Category:", ""))
+        return names
+
     @staticmethod
     def _normalize_category(name: str) -> str:
         """Normalize a category name for comparison: drop the ``Category:`` prefix,
@@ -423,10 +467,18 @@ class ArticlePicker:
         page,
         include_categories: list[str] | None,
         exclude_categories: list[str] | None,
+        *,
+        trust_batch_categories: bool = True,
     ) -> tuple[bool, str, str | None, list[str] | None]:
         """Core is_candidate logic. Also returns the fetched page text/categories
         (or None if rejected before fetching them) so fetch_candidates can reuse
-        them in _build_candidate instead of re-fetching from Wikipedia."""
+        them in _build_candidate instead of re-fetching from Wikipedia.
+
+        ``trust_batch_categories=False`` forces the per-page ``get_categories()``
+        fallback regardless of what ``page._info`` looks like — set by
+        ``fetch_candidates`` when the batch's ``cllimit`` budget has been
+        exceeded (see its call site for why a per-page check can't catch this).
+        """
         # Skip redirects
         if page.redirect:
             return False, "redirect", None, None
@@ -439,27 +491,39 @@ class ArticlePicker:
         if self.config.article_selection.exclude_protected and self.is_protected(page):
             return False, "protected", None, None
 
-        # Get page text and categories
+        # Resolve categories WITHOUT a per-page fetch when the batch carried them
+        # (prop=categories, #18); fall back to a per-page page.categories() call only
+        # when the batch data is absent/truncated/unusable, or when the caller has
+        # already determined the whole batch is untrustworthy (trust_batch_categories).
+        categories = self._batch_categories(page) if trust_batch_categories else None
+        if categories is None:
+            logger.warning("Batch categories unavailable for %r; falling back to per-page fetch", getattr(page, "name", "?"))
+            categories = self.get_categories(page)
+
+        include = include_categories if include_categories is not None else self.config.article_selection.include_categories
+        exclude = exclude_categories if exclude_categories is not None else self.config.article_selection.exclude_categories
+
+        # Topic filter runs BEFORE any wikitext fetch: an off-topic reject costs zero
+        # per-page requests (categories came from the batch), and even on-topic pages
+        # skip the separate page.categories() call.
+        ok, reason = self.category_filter(categories, include, exclude)
+        if not ok:
+            return False, reason, None, categories
+
+        # On-topic: now fetch wikitext (unavoidable — needed for the BLP check, body
+        # line count, and {{Citation needed}} extraction).
         try:
             page_text = page.text()
         except Exception as e:
-            return False, f"error reading page: {e}", None, None
+            return False, f"error reading page: {e}", None, categories
 
         if not page_text:
-            return False, "empty page", None, None
+            return False, "empty page", None, categories
 
         # Cost guard: don't spend a Claude call on a very long article.
         max_chars = self.config.article_selection.max_wikitext_chars
         if max_chars and len(page_text) > max_chars:
-            return False, f"too long to analyze ({len(page_text)} chars)", page_text, None
-
-        categories = self.get_categories(page)
-
-        include = include_categories if include_categories is not None else self.config.article_selection.include_categories
-        exclude = exclude_categories if exclude_categories is not None else self.config.article_selection.exclude_categories
-        ok, reason = self.category_filter(categories, include, exclude)
-        if not ok:
-            return False, reason, page_text, categories
+            return False, f"too long to analyze ({len(page_text)} chars)", page_text, categories
 
         # BLP is excluded by default. A deliberately-scoped topic filter may opt out via
         # guardrails.relax_blp_when_topic_filtered — but ONLY when an include filter is
@@ -551,8 +615,16 @@ class ArticlePicker:
             return
 
         start_prefix = self.config.article_selection.category_start_prefix
-        if start_prefix and hasattr(cat_page, "args"):
-            cat_page.args["gcmstartsortkeyprefix"] = start_prefix
+        if hasattr(cat_page, "args"):
+            if start_prefix:
+                cat_page.args["gcmstartsortkeyprefix"] = start_prefix
+            # Piggyback each candidate's category membership onto the batch
+            # generator=categorymembers query so the topic filter can run before any
+            # per-page fetch (see issue #18). prop is a single pipe-delimited value, so
+            # overwriting the default 'info|imageinfo' with the superset is correct and
+            # preserves the info|imageinfo|protection data the rest of the flow relies on.
+            cat_page.args["prop"] = "info|imageinfo|categories"
+            cat_page.args["cllimit"] = "max"
 
         # Resolve and expand the include/exclude lists once per fetch (not once per page):
         # each configured name that has a static discovery file is widened to its
@@ -564,6 +636,7 @@ class ArticlePicker:
 
         pool_size = max(self.config.article_selection.candidate_pool_size, limit)
         pool: list[CandidateArticle] = []
+        seen_titles: set[str] = set()
         # Sequential, one request in flight at a time — per mediawiki.org/wiki/API:Etiquette,
         # "making your requests in series rather than in parallel... should result in a
         # safe request rate."
@@ -571,12 +644,32 @@ class ArticlePicker:
             if len(pool) >= pool_size:
                 break
 
+            # In-fetch dedup, independent of the persistent seen_store: live-verified
+            # against the real API, a category with enough category rows per page to
+            # exceed cllimit=max (very plausible for a batch of up to 500 pages) makes
+            # MediaWiki return a top-level clcontinue and mwclient echoes it back on the
+            # next request — which re-fetches the SAME ~500-page generator batch (not
+            # new pages) to keep draining categories, so GeneratorList re-yields
+            # already-seen Page objects with no dedup of its own (see #18 review).
+            # A pure in-memory title check is cheap insurance against double-processing.
+            if page.name in seen_titles:
+                continue
+            seen_titles.add(page.name)
+
             # Skip already-processed articles first — a cheap title lookup, no
             # page fetch — so fetching progresses instead of restarting at the top.
             if self.seen_store is not None and self.seen_store.is_seen(page.name):
                 continue
 
-            is_ok, _, page_text, categories = self._evaluate_candidate(page, include, exclude)
+            # Truncation-aware fallback: the SAME clcontinue mechanism above also means
+            # a page's own page._info["categories"] can be silently partial with no
+            # per-page signal (_batch_categories can't detect this — see its docstring).
+            # Once mwclient has echoed a clcontinue back into cat_page.args, no page
+            # seen for the rest of this fetch can be trusted from the batch; force the
+            # per-page get_categories() fallback instead of risking a wrong accept/
+            # reject/BLP decision on a truncated category list.
+            trust_batch_categories = not bool(getattr(cat_page, "args", {}).get("clcontinue"))
+            is_ok, _, page_text, categories = self._evaluate_candidate(page, include, exclude, trust_batch_categories=trust_batch_categories)
             if not is_ok:
                 continue
 
