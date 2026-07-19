@@ -3,7 +3,7 @@
 import pytest
 from unittest.mock import Mock, patch
 
-from wiki_cite.source_finder import SourceFinder, ReliabilityRating, extract_citation_url
+from wiki_cite.source_finder import SourceFinder, ReliabilityRating, extract_citation_url, extract_all_citation_urls
 from wiki_cite.models import Source, SourceType
 
 
@@ -281,6 +281,39 @@ def test_extract_citation_url_returns_none_when_absent():
     assert extract_citation_url(text) is None
 
 
+def test_extract_all_citation_urls_multiple_cites_and_bare():
+    """Test that every cite-template URL and bare URL is returned, in first-seen order."""
+    text = (
+        "First claim.<ref>{{cite web |title=A |url=https://example.com/a}}</ref> "
+        "Second claim.<ref>{{cite news |title=B |URL=https://example.com/b}}</ref> "
+        "See also https://example.com/c for background."
+    )
+    assert extract_all_citation_urls(text) == [
+        "https://example.com/a",
+        "https://example.com/b",
+        "https://example.com/c",
+    ]
+
+
+def test_extract_all_citation_urls_dedups_preserving_order():
+    """Test that a URL repeated as a cite param and again bare is surfaced once, in first-seen order."""
+    text = (
+        "First claim.<ref>{{cite web |title=A |url=https://example.com/a}}</ref> "
+        "Repeated claim.<ref>{{cite web |title=A2 |url=https://example.com/a}}</ref> "
+        "Also see https://example.com/a and https://example.com/b for details."
+    )
+    assert extract_all_citation_urls(text) == [
+        "https://example.com/a",
+        "https://example.com/b",
+    ]
+
+
+def test_extract_all_citation_urls_empty_when_no_citations():
+    """Test that a citation-free page returns an empty list, not None or an error."""
+    text = "Fixed grammar, no citation here."
+    assert extract_all_citation_urls(text) == []
+
+
 def test_find_sources_for_claim_returns_sorted(source_finder):
     """Test that sources are sorted by reliability."""
     with patch.object(source_finder, "search_semantic_scholar") as mock_semantic:
@@ -303,3 +336,143 @@ def test_find_sources_for_claim_returns_sorted(source_finder):
 
         # Generally reliable should come first
         assert sources[0].reliability == ReliabilityRating.GENERALLY_RELIABLE
+
+
+class _FakeBacklinkPage:
+    """Stand-in for an mwclient Page yielded by page.backlinks(): only `.name` and
+    `.text()` are used by fetch_backlink_pages."""
+
+    def __init__(self, name: str, text: str = ""):
+        self.name = name
+        self._text = text
+
+    def text(self):
+        if isinstance(self._text, Exception):
+            raise self._text
+        return self._text
+
+
+class _FakeArticlePage:
+    """Stand-in for `site.pages[title]`: `.backlinks(...)` returns the configured list."""
+
+    def __init__(self, backlinks: list):
+        self._backlinks = backlinks
+
+    def backlinks(self, namespace=None, filterredir=None, **kwargs):
+        return iter(self._backlinks)
+
+
+def _make_backlink_site(title: str, backlinks: list):
+    """Build a fake mwclient Site whose `.pages[title]` looks up the given backlinks."""
+    site = Mock()
+    site.pages = {title: _FakeArticlePage(backlinks)}
+    return site
+
+
+def _cite(url: str) -> str:
+    """Minimal wikitext embedding a single {{cite web}} url= citation."""
+    return f"<ref>{{{{cite web |title=Source |url={url}}}}}</ref>"
+
+
+def test_find_backlink_sources_caps_pages(source_finder, monkeypatch):
+    """AC2.1: at most config.agent.max_backlink_pages_to_check backlinking pages are
+    scanned, so only their URLs can ever surface as candidates."""
+    monkeypatch.setattr(source_finder.config.agent, "max_backlink_pages_to_check", 2)
+    backlinks = [_FakeBacklinkPage(f"Page {i}", _cite(f"https://example.com/{i}")) for i in range(5)]
+    site = _make_backlink_site("Article", backlinks)
+
+    sources = source_finder.find_backlink_sources("Article", site=site)
+
+    assert [s.url for s in sources] == ["https://example.com/0", "https://example.com/1"]
+
+
+def test_find_backlink_sources_skips_failed_page(source_finder):
+    """AC2.2: a backlinking page whose fetch fails is skipped; candidates from the
+    other pages are still surfaced."""
+    backlinks = [
+        _FakeBacklinkPage("Good A", _cite("https://example.com/a")),
+        _FakeBacklinkPage("Bad", RuntimeError("network error")),
+        _FakeBacklinkPage("Good B", _cite("https://example.com/b")),
+    ]
+    site = _make_backlink_site("Article", backlinks)
+
+    sources = source_finder.find_backlink_sources("Article", site=site)
+
+    assert [s.url for s in sources] == ["https://example.com/a", "https://example.com/b"]
+
+
+def test_find_backlink_sources_excludes_self_reference(source_finder):
+    """AC2.3: the edited article is never counted among its own backlinks, so its
+    own citations never leak in as candidates for itself."""
+    backlinks = [
+        _FakeBacklinkPage("Some_Article", _cite("https://example.com/self-only")),
+        _FakeBacklinkPage("Other Page", _cite("https://example.com/other")),
+    ]
+    site = _make_backlink_site("Some Article", backlinks)
+
+    sources = source_finder.find_backlink_sources("Some Article", site=site)
+
+    assert [s.url for s in sources] == ["https://example.com/other"]
+
+
+def test_find_backlink_sources_dedups_across_pages(source_finder):
+    """AC3.3: the same external URL cited on two different backlinking pages is
+    only surfaced once."""
+    backlinks = [
+        _FakeBacklinkPage("Page A", _cite("https://example.com/shared")),
+        _FakeBacklinkPage("Page B", _cite("https://example.com/shared")),
+    ]
+    site = _make_backlink_site("Article", backlinks)
+
+    sources = source_finder.find_backlink_sources("Article", site=site)
+
+    assert [s.url for s in sources] == ["https://example.com/shared"]
+
+
+def test_find_backlink_sources_reliability_parity(source_finder):
+    """AC4.1: every surfaced URL passes through the same check_reliability() as
+    other search tools, returning a Source with reliability set and matching shape."""
+    backlinks = [_FakeBacklinkPage("Page A", _cite("https://www.nytimes.com/article"))]
+    site = _make_backlink_site("Article", backlinks)
+
+    sources = source_finder.find_backlink_sources("Article", site=site)
+
+    assert len(sources) == 1
+    source = sources[0]
+    assert source.url == "https://www.nytimes.com/article"
+    assert source.source_type == SourceType.WEB
+    assert source.reliability == ReliabilityRating.GENERALLY_RELIABLE
+
+
+def test_find_backlink_sources_wikipedia_url_not_exempted(source_finder):
+    """AC4.2: a wikipedia.org URL is checked by check_reliability() like any other
+    domain, never special-cased into automatic acceptance."""
+    backlinks = [_FakeBacklinkPage("Page A", _cite("https://en.wikipedia.org/wiki/Some_Topic"))]
+    site = _make_backlink_site("Article", backlinks)
+
+    sources = source_finder.find_backlink_sources("Article", site=site)
+
+    assert len(sources) == 1
+    source = sources[0]
+    assert source.reliability == source_finder.check_reliability(source.url)
+    assert source.reliability != ReliabilityRating.GENERALLY_RELIABLE
+
+
+def test_find_backlink_sources_builds_site_lazily_when_none(source_finder):
+    """When no site is injected (the real agent-tool call path), a real mwclient Site
+    is built lazily and passed through to fetch_backlink_pages — every other test
+    here injects a fake site instead, so this is the only exerciser of that branch."""
+    with (
+        patch("wiki_cite.source_finder.mwclient.Site") as mock_site_cls,
+        patch("wiki_cite.source_finder.fetch_backlink_pages", return_value=[]) as mock_fetch,
+    ):
+        mock_site_instance = Mock()
+        mock_site_cls.return_value = mock_site_instance
+
+        sources = source_finder.find_backlink_sources("Article")
+
+    assert sources == []
+    call_args, call_kwargs = mock_site_cls.call_args
+    assert call_args == ("en.wikipedia.org",)
+    assert "pool" in call_kwargs
+    mock_fetch.assert_called_once_with(mock_site_instance, "Article", source_finder.config.agent.max_backlink_pages_to_check)

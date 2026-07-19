@@ -100,6 +100,55 @@ def crawl_subcategories(
     return sorted(results)
 
 
+def fetch_backlink_pages(site, title: str, max_pages: int) -> list[tuple[str, str]]:
+    """Sequentially fetch the wikitext of pages that link TO ``title``.
+
+    Uses MediaWiki "what links here" (``page.backlinks``) restricted to the article
+    namespace and non-redirects. Fetches at most ``max_pages`` pages one request at a
+    time (per API:Etiquette — the injected ``site`` already carries _build_session()'s
+    429/backoff pool). A page whose fetch fails is logged and skipped; the scan
+    continues with the rest rather than aborting (mirrors crawl_subcategories's
+    degrade-on-branch-failure). The edited article itself is never included even if it
+    somehow appears among its own backlinks.
+
+    Args:
+        site: an mwclient Site (e.g. ArticlePicker.site).
+        title: the article currently being edited.
+        max_pages: hard cap on backlinking pages fetched (agent.max_backlink_pages_to_check).
+
+    Returns:
+        A list of (page_title, wikitext) for successfully fetched backlinking pages,
+        in backlink-iteration order, length <= max_pages. Empty list if the article
+        has no backlinks or none could be fetched.
+    """
+    self_key = title.replace("_", " ").strip().casefold()
+
+    page = site.pages[title]
+    try:
+        backlinks = page.backlinks(namespace=0, filterredir="nonredirects")
+    except Exception as e:
+        logger.warning("Skipping backlink scan for %r: %s", title, e)
+        return []
+
+    results: list[tuple[str, str]] = []
+    for backlink in backlinks:
+        bl_key = backlink.name.replace("_", " ").strip().casefold()
+        if bl_key == self_key:
+            continue
+
+        try:
+            text = backlink.text()
+        except Exception as e:
+            logger.warning("Skipping backlink page %r: %s", backlink.name, e)
+            continue
+
+        results.append((backlink.name, text))
+        if len(results) >= max_pages:
+            break
+
+    return results
+
+
 # Matches inline {{Citation needed}} tags and its common redirects ({{cn}}, {{fact}}).
 # These are the signal Citation Hunt surfaces: a specific claim needing a source.
 CITATION_NEEDED_RE = re.compile(

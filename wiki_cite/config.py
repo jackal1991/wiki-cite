@@ -24,6 +24,10 @@ class AgentConfig(BaseSettings):
     # Cap on results returned per search tool call, to keep tool_result
     # payloads (and therefore token spend) small.
     search_results_per_query: int = 3
+    # Cost guard: hard cap on backlinking pages fetched per search_backlinks tool
+    # call (a single model turn can internally fetch many pages sequentially, like
+    # crawl_subcategories — this bounds that inner work, independent of max_search_turns).
+    max_backlink_pages_to_check: int = 10
 
 
 class GuardrailsConfig(BaseSettings):

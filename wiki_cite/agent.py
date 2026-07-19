@@ -53,12 +53,24 @@ follow these strict rules:
   judgment, not for contentious or self-serving claims.
 
 - Prefer `search_scholar` or `search_crossref` for claims that plausibly cite academic or
-  scholarly work; use `search_web` for everyday factual claims (biography, events, places)
+  scholarly work; use `search_web` for everyday factual claims (biography, events, places);
+  use `search_backlinks` when a closely-related article likely already cites a usable source
+  for the same claim
 - When you `fetch_page` a candidate, weigh it against the reliability criteria above — not
   only whether it mentions the claim, but whether the outlet is independent, edited, and
   secondary — before citing it
 - Add <ref> tags with proper {{cite}} templates
 - Only cite claims already present in the article — never add information from sources
+
+  **WP:CIRCULAR / WP:WPNOTRS — `search_backlinks` results are leads, not sources.**
+  `search_backlinks` returns candidate external URLs discovered on OTHER Wikipedia articles
+  that happen to link to this one. Those other articles are never themselves a source: do not
+  cite Wikipedia under any circumstance — not the backlinking article the URL was found on,
+  not this article, not any `wikipedia.org` link. A backlink-discovered URL earns citation
+  ONLY by independently passing the exact same reliability judgment as any other source —
+  verify it with `fetch_page`, weigh its independence, editorial oversight, and
+  secondary-vs-primary standing, and confirm it genuinely supports the flagged claim. Finding
+  a URL via another article's citations is never itself sufficient justification.
 
 ### Grammar & Spelling
 - Fix grammatical errors, spelling mistakes, and punctuation
@@ -142,6 +154,30 @@ SEARCH_WEB_TOOL: dict[str, Any] = {
     "strict": True,
 }
 
+SEARCH_BACKLINKS_TOOL: dict[str, Any] = {
+    "name": "search_backlinks",
+    "description": (
+        "Discover candidate citation URLs by scanning other Wikipedia articles that link to "
+        "this article ('what links here'). Related articles often already cite an external "
+        "source that also supports the flagged claim. This only SURFACES external URLs found "
+        "on those pages as candidates — a Wikipedia article is NEVER itself a usable source "
+        "(WP:CIRCULAR). Every returned URL must still be verified with fetch_page and judged "
+        "against the reliability criteria before you cite it."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "article_title": {
+                "type": "string",
+                "description": "The title of the article currently being edited.",
+            }
+        },
+        "required": ["article_title"],
+        "additionalProperties": False,
+    },
+    "strict": True,
+}
+
 FETCH_PAGE_TOOL: dict[str, Any] = {
     "name": "fetch_page",
     "description": (
@@ -198,7 +234,7 @@ PROPOSE_EDITS_TOOL: dict[str, Any] = {
     "strict": True,
 }
 
-SEARCH_TOOLS: list[dict[str, Any]] = [SEARCH_SCHOLAR_TOOL, SEARCH_CROSSREF_TOOL, SEARCH_WEB_TOOL, FETCH_PAGE_TOOL]
+SEARCH_TOOLS: list[dict[str, Any]] = [SEARCH_SCHOLAR_TOOL, SEARCH_CROSSREF_TOOL, SEARCH_WEB_TOOL, SEARCH_BACKLINKS_TOOL, FETCH_PAGE_TOOL]
 ALL_TOOLS: list[dict[str, Any]] = [*SEARCH_TOOLS, PROPOSE_EDITS_TOOL]
 
 # Maps a search tool name to the config.sources.search_apis / activity-log API label.
@@ -206,6 +242,7 @@ _SEARCH_TOOL_API_NAMES: dict[str, str] = {
     "search_scholar": "semantic_scholar",
     "search_crossref": "crossref",
     "search_web": "web_search",
+    "search_backlinks": "wikipedia_backlinks",
 }
 
 
@@ -240,7 +277,7 @@ class ClaudeAgent:
         """Execute one search/fetch tool call. Never raises.
 
         Args:
-            name: The tool name (search_scholar, search_crossref, search_web, fetch_page).
+            name: The tool name (search_scholar, search_crossref, search_web, search_backlinks, fetch_page).
             tool_input: The tool's parsed input dict.
 
         Returns:
@@ -258,6 +295,9 @@ class ClaudeAgent:
             if name == "search_web":
                 sources = self.source_finder.search_web(tool_input["query"], max_results=per_query)
                 return True, json.dumps(_sources_to_dicts(sources))
+            if name == "search_backlinks":
+                sources = self.source_finder.find_backlink_sources(tool_input["article_title"])
+                return True, json.dumps(_sources_to_dicts(sources))
             if name == "fetch_page":
                 preview = self.source_finder.fetch_page_preview(tool_input["url"])
                 return True, json.dumps(preview)
@@ -272,7 +312,7 @@ class ClaudeAgent:
         return {
             "type": "searching",
             "api": _SEARCH_TOOL_API_NAMES.get(name, name),
-            "query": tool_input.get("query", ""),
+            "query": tool_input.get("query") or tool_input.get("article_title", ""),
         }
 
     def _tool_result_event(self, name: str, ok: bool, payload: str) -> dict[str, Any]:
