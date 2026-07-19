@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 import pytest
 
-from wiki_cite.agent import PROPOSE_EDITS_TOOL, SEARCH_SYSTEM_PROMPT, ClaudeAgent
+from wiki_cite.agent import ALL_TOOLS, PROPOSE_EDITS_TOOL, SEARCH_BACKLINKS_TOOL, SEARCH_SYSTEM_PROMPT, SEARCH_TOOLS, ClaudeAgent
 from wiki_cite.models import Article, EditType, ProposedEdit, ReliabilityRating, Source, SourceType
 
 
@@ -76,6 +76,23 @@ def test_search_system_prompt_carries_sourcing_policy():
     assert "self-published" in lowered
     for banned in ("blog", "forum", "social media"):
         assert banned in lowered, f"expected {banned} in self-published exclusions"
+
+
+def test_search_system_prompt_forbids_citing_wikipedia():
+    """AC5.1/AC5.2: the prompt must explicitly forbid citing Wikipedia itself — including the
+    backlinking article a search_backlinks URL was found on — with WP:CIRCULAR/WP:WPNOTRS
+    language, so a future edit can't silently drop this guardrail."""
+    prompt = SEARCH_SYSTEM_PROMPT
+
+    for token in ("WP:CIRCULAR", "WP:WPNOTRS"):
+        assert token in prompt, f"missing policy reference {token}"
+
+    lowered = prompt.lower()
+    assert "search_backlinks" in lowered
+    # Collapse line-wrap whitespace so a phrase split across source lines still matches.
+    normalized = " ".join(lowered.split())
+    assert "do not cite wikipedia" in normalized
+    assert "backlinking article" in normalized
 
 
 # --- Extraction / apply_edits (unchanged behavior) --------------------------
@@ -189,6 +206,24 @@ def test_dispatch_search_web_success(agent):
 
     assert ok is True
     assert "News item" in payload
+
+
+def test_search_backlinks_in_tool_lists():
+    """AC1.1: search_backlinks is a search tool, available in both SEARCH_TOOLS and ALL_TOOLS."""
+    assert SEARCH_BACKLINKS_TOOL in SEARCH_TOOLS
+    assert SEARCH_BACKLINKS_TOOL in ALL_TOOLS
+
+
+def test_dispatch_search_backlinks_success(agent):
+    """search_backlinks wraps SourceFinder.find_backlink_sources and returns the same
+    _sources_to_dicts JSON shape as the other search tools (AC1.1, AC4.1)."""
+    sources = [Source(title="Related coverage", url="https://example.com/a", source_type=SourceType.WEB, reliability=ReliabilityRating.GENERALLY_RELIABLE)]
+    with patch.object(agent.source_finder, "find_backlink_sources", return_value=sources) as mock_find:
+        ok, payload = agent._dispatch_search_tool("search_backlinks", {"article_title": "Test Article"})
+
+    assert ok is True
+    assert "Related coverage" in payload
+    mock_find.assert_called_once_with("Test Article")
 
 
 def test_dispatch_fetch_page_success(agent):
@@ -385,6 +420,25 @@ def test_turn_cap_forces_terminal_tool(agent, sample_article):
     # The earlier calls were not capped.
     _, kwargs_first = mock_create.call_args_list[0]
     assert kwargs_first["tool_choice"] == {"type": "auto"}
+
+
+def test_search_backlinks_unavailable_at_turn_cap(agent, sample_article):
+    """AC1.2: at the turn cap, search_backlinks is unavailable exactly like the other
+    search tools — only propose_edits is offered."""
+    agent.config.agent.max_search_turns = 1
+
+    search1 = _response("tool_use", [_tool_use_block("t1", "search_backlinks", {"article_title": "Test Article"})])
+    forced_final = _response("tool_use", [_tool_use_block("t2", "propose_edits", {"edits": []})])
+
+    with (
+        patch.object(agent.client.messages, "create", side_effect=[search1, forced_final]) as mock_create,
+        patch.object(agent.source_finder, "find_backlink_sources", return_value=[]),
+    ):
+        _run_events(agent, sample_article)
+
+    _, kwargs_final = mock_create.call_args_list[1]
+    assert SEARCH_BACKLINKS_TOOL not in kwargs_final["tools"]
+    assert kwargs_final["tools"] == [PROPOSE_EDITS_TOOL]
 
 
 def test_refusal_stop_reason_ends_loop_gracefully(agent, sample_article):
