@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 import pytest
 
-from wiki_cite.agent import ALL_TOOLS, PROPOSE_EDITS_TOOL, SEARCH_BACKLINKS_TOOL, SEARCH_SYSTEM_PROMPT, SEARCH_TOOLS, ClaudeAgent
+from wiki_cite.agent import ALL_TOOLS, PROPOSE_EDITS_TOOL, SEARCH_BACKLINKS_TOOL, SEARCH_SYSTEM_PROMPT, SEARCH_TOOLS, ClaudeAgent, _SEARCH_TOOL_API_NAMES
 from wiki_cite.models import Article, EditType, ProposedEdit, ReliabilityRating, Source, SourceType
 
 
@@ -209,9 +209,11 @@ def test_dispatch_search_web_success(agent):
 
 
 def test_search_backlinks_in_tool_lists():
-    """AC1.1: search_backlinks is a search tool, available in both SEARCH_TOOLS and ALL_TOOLS."""
+    """AC1.1: search_backlinks is a search tool, available in both SEARCH_TOOLS and ALL_TOOLS,
+    with an activity-log API label like every other search tool."""
     assert SEARCH_BACKLINKS_TOOL in SEARCH_TOOLS
     assert SEARCH_BACKLINKS_TOOL in ALL_TOOLS
+    assert _SEARCH_TOOL_API_NAMES["search_backlinks"] == "wikipedia_backlinks"
 
 
 def test_dispatch_search_backlinks_success(agent):

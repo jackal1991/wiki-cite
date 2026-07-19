@@ -456,3 +456,23 @@ def test_find_backlink_sources_wikipedia_url_not_exempted(source_finder):
     source = sources[0]
     assert source.reliability == source_finder.check_reliability(source.url)
     assert source.reliability != ReliabilityRating.GENERALLY_RELIABLE
+
+
+def test_find_backlink_sources_builds_site_lazily_when_none(source_finder):
+    """When no site is injected (the real agent-tool call path), a real mwclient Site
+    is built lazily and passed through to fetch_backlink_pages — every other test
+    here injects a fake site instead, so this is the only exerciser of that branch."""
+    with (
+        patch("wiki_cite.source_finder.mwclient.Site") as mock_site_cls,
+        patch("wiki_cite.source_finder.fetch_backlink_pages", return_value=[]) as mock_fetch,
+    ):
+        mock_site_instance = Mock()
+        mock_site_cls.return_value = mock_site_instance
+
+        sources = source_finder.find_backlink_sources("Article")
+
+    assert sources == []
+    call_args, call_kwargs = mock_site_cls.call_args
+    assert call_args == ("en.wikipedia.org",)
+    assert "pool" in call_kwargs
+    mock_fetch.assert_called_once_with(mock_site_instance, "Article", source_finder.config.agent.max_backlink_pages_to_check)
