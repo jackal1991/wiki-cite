@@ -13,6 +13,7 @@ from wiki_cite.config import (
     WikipediaConfig,
     ArticleSelectionConfig,
     FeedbackConfig,
+    RevertTrackingConfig,
 )
 
 
@@ -67,6 +68,35 @@ def test_feedback_config_defaults():
     assert config.enabled is True
     assert config.epsilon == 0.15
     assert config.min_samples == 5
+
+
+def test_revert_tracking_config_defaults():
+    config = RevertTrackingConfig()
+    assert config.check_horizon_days == 7
+
+
+def test_revert_tracking_default_is_seven():
+    """A config file with no `revert_tracking:` section still gets the 7-day default."""
+    config = Config.load("nonexistent.yaml")
+    assert config.revert_tracking.check_horizon_days == 7
+
+
+def test_revert_tracking_override():
+    """A `revert_tracking:` block overrides the default horizon."""
+    yaml_content = """
+revert_tracking:
+  check_horizon_days: 3
+"""
+
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+        f.write(yaml_content)
+        f.flush()
+
+        try:
+            config = Config.load(f.name)
+            assert config.revert_tracking.check_horizon_days == 3
+        finally:
+            Path(f.name).unlink()
 
 
 def test_config_load_from_yaml():

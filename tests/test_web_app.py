@@ -228,6 +228,31 @@ def test_stats_route_renders_rates(app):
     assert b"1/1" in response.data
 
 
+def test_stats_summary_renders(app, tmp_path):
+    store = SeenStore(tmp_path / "seen.db")
+    store.record_outcome("Groveland Four", "123", "pushed")
+    store.record_outcome("Groveland Four", "123", "reverted")
+    store.record_outcome("Groveland Four", "123", "approved")
+    store.record_outcome("Groveland Four", "123", "rejected")
+    client = app.test_client()
+
+    response = client.get("/stats")
+
+    assert response.status_code == 200
+    assert b"Articles pushed" in response.data
+    assert b"100%" in response.data  # revert_rate: 1/1 reverted
+    assert b"1/1" in response.data  # approve/reject counts
+
+
+def test_stats_summary_empty_db(app):
+    client = app.test_client()
+
+    response = client.get("/stats")
+
+    assert response.status_code == 200
+    assert b"No pushes recorded yet." in response.data
+
+
 def test_stats_route_empty_db_no_error(app):
     client = app.test_client()
 
@@ -406,6 +431,26 @@ def test_reject_proposal_unknown_id_404(app):
     response = client.post("/api/proposals/does-not-exist/reject")
 
     assert response.status_code == 404
+
+
+def test_push_persists_new_revid(app, tmp_path):
+    """A successful push carries the post-push newrevid into the "pushed" outcome rows."""
+    proposal = make_proposal()
+    for edit in proposal.edits:
+        edit.approved = True
+    app.proposals[proposal.id] = proposal
+    app.push_service.push_edits = Mock(return_value=(True, "ok", "999"))
+    client = app.test_client()
+
+    response = client.post(f"/api/proposals/{proposal.id}/push")
+
+    assert response.status_code == 200
+    assert response.get_json()["success"] is True
+
+    store = SeenStore(str(tmp_path / "seen.db"))
+    rows = store._conn.execute("SELECT revision_id FROM outcomes WHERE outcome = 'pushed'").fetchall()
+    assert rows
+    assert all(revision_id == "999" for (revision_id,) in rows)
 
 
 def test_push_frees_a_slot(app):

@@ -134,6 +134,9 @@ def cmd_config(args):
     print(f"  Exclude BLP: {config.article_selection.exclude_blp}")
     print(f"  Exclude protected: {config.article_selection.exclude_protected}")
 
+    print("\nRevert Tracking:")
+    print(f"  Check horizon (days): {config.revert_tracking.check_horizon_days}")
+
 
 def cmd_discover_categories(args):
     """Crawl a category's subcategory tree and write a static expansion file."""
@@ -165,6 +168,27 @@ def cmd_stats(args):
             shown = True
         if not shown:
             print("  (no data)")
+
+
+def cmd_check_reverts(args):
+    """Check pushed articles for reverts within the configured horizon."""
+    import mwclient
+
+    from wiki_cite.revert_checker import check_pending_reverts
+
+    config = get_config()
+    store = SeenStore(config.seen_db_path)
+    site = mwclient.Site("en.wikipedia.org")
+
+    horizon = config.revert_tracking.check_horizon_days
+    summary = check_pending_reverts(site, store, horizon)
+
+    print(f"Checked {summary.checked} pushed article(s) within the {horizon}-day horizon.")
+    print(f"Reverts found: {summary.reverts_found}")
+    if summary.failures:
+        print(f"\n{len(summary.failures)} article(s) could not be checked:")
+        for title, error in summary.failures:
+            print(f"  {title}: {error}")
 
 
 def main():
@@ -206,6 +230,10 @@ def main():
     # Stats command
     stats_parser = subparsers.add_parser("stats", help="Show approval/success rates by dimension")
     stats_parser.set_defaults(func=cmd_stats)
+
+    # Check reverts command
+    check_reverts_parser = subparsers.add_parser("check-reverts", help="Check pushed articles for reverts within the horizon")
+    check_reverts_parser.set_defaults(func=cmd_check_reverts)
 
     # Discover categories command
     discover_parser = subparsers.add_parser(

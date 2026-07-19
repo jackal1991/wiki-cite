@@ -5,8 +5,9 @@ import json
 from unittest.mock import Mock, patch
 
 import wiki_cite.category_discovery as category_discovery
-from wiki_cite.cli import cmd_discover_categories, cmd_stats
+from wiki_cite.cli import cmd_check_reverts, cmd_discover_categories, cmd_stats
 from wiki_cite.config import Config, set_config
+from wiki_cite.revert_checker import RevertCheckSummary
 from wiki_cite.seen_store import SeenStore
 
 
@@ -103,3 +104,54 @@ def test_cmd_discover_categories_writes_file(tmp_path, capsys, monkeypatch):
 
     out = capsys.readouterr().out
     assert f"Wrote 2 accepted categories to {expected_path}" in out
+
+
+def test_cmd_check_reverts_prints_summary(tmp_path, capsys):
+    set_config(Config(SEEN_DB_PATH=str(tmp_path / "seen.db")))
+
+    with (
+        patch("mwclient.Site"),
+        patch("wiki_cite.revert_checker.check_pending_reverts") as mock_check,
+    ):
+        mock_check.return_value = RevertCheckSummary(checked=3, reverts_found=1, failures=[])
+
+        cmd_check_reverts(argparse.Namespace())
+
+    out = capsys.readouterr().out
+    assert "Checked 3" in out
+    assert "Reverts found: 1" in out
+
+
+def test_cmd_check_reverts_reports_failures(tmp_path, capsys):
+    set_config(Config(SEEN_DB_PATH=str(tmp_path / "seen.db")))
+
+    with (
+        patch("mwclient.Site"),
+        patch("wiki_cite.revert_checker.check_pending_reverts") as mock_check,
+    ):
+        mock_check.return_value = RevertCheckSummary(checked=2, reverts_found=0, failures=[("Foo", "HTTPError")])
+
+        cmd_check_reverts(argparse.Namespace())  # must not raise or sys.exit
+
+    out = capsys.readouterr().out
+    assert "Foo" in out
+    assert "HTTPError" in out
+
+
+def test_cmd_check_reverts_uses_configured_horizon(tmp_path, capsys):
+    config = Config(SEEN_DB_PATH=str(tmp_path / "seen.db"))
+    config.revert_tracking.check_horizon_days = 3
+    set_config(config)
+
+    with (
+        patch("mwclient.Site"),
+        patch("wiki_cite.revert_checker.check_pending_reverts") as mock_check,
+    ):
+        mock_check.return_value = RevertCheckSummary(checked=0, reverts_found=0, failures=[])
+
+        cmd_check_reverts(argparse.Namespace())
+
+        assert mock_check.call_args.args[2] == 3
+
+    out = capsys.readouterr().out
+    assert "3-day horizon" in out

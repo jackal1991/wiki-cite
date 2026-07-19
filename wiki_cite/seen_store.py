@@ -10,7 +10,7 @@ import json
 import logging
 import sqlite3
 import threading
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -230,3 +230,61 @@ class SeenStore:
                 tally(str(raw_value), is_success)
 
         return {value: (successes, total) for value, (successes, total) in tallies.items()}
+
+    def pending_revert_candidates(self, horizon_days: int) -> list[tuple[str, str]]:
+        """Return [(article_title, revision_id)] for `"pushed"` outcomes that are
+        within `horizon_days` of their recorded_at, have a non-null revision_id, and
+        have no later `"reverted"` row for the same (article_title, revision_id).
+        """
+        if self._conn is None:
+            return []
+
+        cutoff = (datetime.now() - timedelta(days=horizon_days)).isoformat()
+
+        try:
+            with self._lock:
+                rows = self._conn.execute(
+                    """
+                    SELECT p.article_title, p.revision_id
+                    FROM outcomes p
+                    WHERE p.outcome = 'pushed'
+                      AND p.revision_id IS NOT NULL
+                      AND p.recorded_at >= ?
+                      AND NOT EXISTS (
+                        SELECT 1 FROM outcomes r
+                        WHERE r.outcome = 'reverted'
+                          AND r.article_title = p.article_title
+                          AND r.revision_id = p.revision_id
+                      )
+                    """,
+                    (cutoff,),
+                ).fetchall()
+        except sqlite3.Error:
+            logger.warning("Failed to read pending_revert_candidates", exc_info=True)
+            return []
+
+        return list(dict.fromkeys((title, revision_id) for title, revision_id in rows))
+
+    def summary_counts(self) -> dict[str, int]:
+        """Raw outcome tallies for the dashboard summary. Distinct-article counts
+        for pushed/reverted (an article is one push regardless of edit-row count),
+        raw row counts for approved/rejected (edit-grain review decisions)."""
+        if self._conn is None:
+            return {}
+
+        try:
+            with self._lock:
+                pushed_articles = self._conn.execute("SELECT COUNT(DISTINCT article_title) FROM outcomes WHERE outcome = 'pushed'").fetchone()[0]
+                reverted_articles = self._conn.execute("SELECT COUNT(DISTINCT article_title) FROM outcomes WHERE outcome = 'reverted'").fetchone()[0]
+                approved_edits = self._conn.execute("SELECT COUNT(*) FROM outcomes WHERE outcome = 'approved'").fetchone()[0]
+                rejected_edits = self._conn.execute("SELECT COUNT(*) FROM outcomes WHERE outcome = 'rejected'").fetchone()[0]
+        except sqlite3.Error:
+            logger.warning("Failed to read summary_counts", exc_info=True)
+            return {}
+
+        return {
+            "pushed_articles": pushed_articles,
+            "reverted_articles": reverted_articles,
+            "approved_edits": approved_edits,
+            "rejected_edits": rejected_edits,
+        }

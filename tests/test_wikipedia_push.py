@@ -112,10 +112,11 @@ def test_push_edits_rate_limited(push_service):
 
     proposal = EditProposal(id="test-id", article=article, edits=[edit])
 
-    success, message = push_service.push_edits(proposal, "modified text")
+    success, message, new_revid = push_service.push_edits(proposal, "modified text")
 
     assert success is False
     assert "Rate limit" in message
+    assert new_revid is None
 
 
 def test_push_edits_with_conflict(push_service, mock_site):
@@ -138,10 +139,11 @@ def test_push_edits_with_conflict(push_service, mock_site):
 
     proposal = EditProposal(id="test-id", article=article, edits=[edit])
 
-    success, message = push_service.push_edits(proposal, "modified text")
+    success, message, new_revid = push_service.push_edits(proposal, "modified text")
 
     assert success is False
     assert "conflict" in message.lower()
+    assert new_revid is None
 
 
 def test_push_edits_no_approved_edits(push_service, mock_site):
@@ -164,10 +166,84 @@ def test_push_edits_no_approved_edits(push_service, mock_site):
 
     proposal = EditProposal(id="test-id", article=article, edits=[edit])
 
-    success, message = push_service.push_edits(proposal, "modified text")
+    success, message, new_revid = push_service.push_edits(proposal, "modified text")
 
     assert success is False
     assert "No approved edits" in message
+    assert new_revid is None
+
+
+def test_push_edits_returns_new_revid_from_save(push_service, mock_site):
+    """A successful push captures the newrevid mwclient's save() returns."""
+    mock_page = Mock()
+    mock_page.revision = "123"
+    mock_page.save = Mock(return_value={"result": "Success", "newrevid": 12345, "oldrevid": 12344})
+    mock_site.pages = {"Test": mock_page}
+
+    article = Article(title="Test", url="https://example.com", wikitext="test", revision_id="123")
+    edit = ProposedEdit(
+        edit_type=EditType.GRAMMAR_FIX,
+        original_text="test",
+        proposed_text="test2",
+        rationale="fix",
+        confidence="high",
+        approved=True,
+    )
+    proposal = EditProposal(id="test-id", article=article, edits=[edit])
+
+    success, message, new_revid = push_service.push_edits(proposal, "modified text")
+
+    assert success is True
+    assert new_revid == "12345"
+
+
+def test_push_edits_null_edit_returns_none_revid(push_service, mock_site):
+    """A null edit (no content change) omits newrevid; must not fabricate one."""
+    mock_page = Mock()
+    mock_page.revision = "123"
+    mock_page.save = Mock(return_value={"result": "Success", "nochange": ""})
+    mock_site.pages = {"Test": mock_page}
+
+    article = Article(title="Test", url="https://example.com", wikitext="test", revision_id="123")
+    edit = ProposedEdit(
+        edit_type=EditType.GRAMMAR_FIX,
+        original_text="test",
+        proposed_text="test2",
+        rationale="fix",
+        confidence="high",
+        approved=True,
+    )
+    proposal = EditProposal(id="test-id", article=article, edits=[edit])
+
+    success, message, new_revid = push_service.push_edits(proposal, "modified text")
+
+    assert success is True
+    assert new_revid is None
+
+
+def test_push_edits_save_failure_returns_none_revid(push_service, mock_site):
+    """A save() failure must not fabricate a revid and must not raise."""
+    mock_page = Mock()
+    mock_page.revision = "123"
+    mock_page.save = Mock(side_effect=Exception("network error"))
+    mock_site.pages = {"Test": mock_page}
+
+    article = Article(title="Test", url="https://example.com", wikitext="test", revision_id="123")
+    edit = ProposedEdit(
+        edit_type=EditType.GRAMMAR_FIX,
+        original_text="test",
+        proposed_text="test2",
+        rationale="fix",
+        confidence="high",
+        approved=True,
+    )
+    proposal = EditProposal(id="test-id", article=article, edits=[edit])
+
+    success, message, new_revid = push_service.push_edits(proposal, "modified text")
+
+    assert success is False
+    assert "Failed to push edits" in message
+    assert new_revid is None
 
 
 def test_preview_diff(push_service):
