@@ -278,6 +278,27 @@ def create_app() -> Flask:
             }
         )
 
+    @app.route("/api/proposals/<proposal_id>/next")
+    def next_pending_proposal(proposal_id: str):
+        """Return the id of the next proposal still awaiting review, so the review
+        page can jump straight to it without a round-trip through the queue. Walks
+        proposals in queue (insertion) order starting just after the current one and
+        wrapping around, skipping the current proposal and any that are no longer
+        'pending' (pushed/rejected/approved). Returns {"next_id": None} when the
+        current proposal is the only pending one (or none are)."""
+        if proposal_id not in proposals:
+            return jsonify({"error": "Proposal not found"}), 404
+
+        ordered = list(proposals.values())
+        start = next(i for i, p in enumerate(ordered) if p.id == proposal_id)
+        # Rotate the list to begin right after the current proposal, so traversal is
+        # forward-with-wraparound and every other pending item is reachable.
+        rotated = ordered[start + 1 :] + ordered[: start + 1]
+        for p in rotated:
+            if p.id != proposal_id and p.status == "pending":
+                return jsonify({"next_id": p.id})
+        return jsonify({"next_id": None})
+
     @app.route("/api/categories/search")
     def search_categories():
         """Search Wikipedia Category-namespace page names by prefix, for the

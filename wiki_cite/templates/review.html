@@ -4,7 +4,10 @@
 
 {% block content %}
 <main>
-    <button class="btn-back" onclick="window.location.href='/'">← Back to queue</button>
+    <div class="review-nav">
+        <button class="btn-back" onclick="window.location.href='/'">← Back to queue</button>
+        <a id="next-in-queue" class="btn-ghost" href="#" style="display:none;">Next in queue →</a>
+    </div>
 
     <div id="error" class="banner error" style="display:none;"></div>
     <div id="success" class="banner success" style="display:none;"></div>
@@ -328,6 +331,28 @@
         successDiv.style.display = 'block';
     }
 
+    async function setupNextInQueue() {
+        const link = document.getElementById('next-in-queue');
+        try {
+            const res = await fetch(`/api/proposals/${proposalId}/next`);
+            const { next_id } = await res.json();
+            if (next_id) {
+                // A pending proposal remains: jump straight to it (AC2).
+                link.href = `/review/${next_id}`;
+                link.textContent = 'Next in queue →';
+            } else {
+                // Nothing else pending: not a dead link — send back to the queue (AC4).
+                link.href = '/';
+                link.textContent = 'Back to queue →';
+            }
+            link.style.display = '';
+        } catch (err) {
+            // If the lookup fails, leave the control hidden; the top-left
+            // "← Back to queue" button is always available as a fallback.
+        }
+    }
+
     loadProposal();
+    setupNextInQueue();
 </script>
 {% endblock %}
