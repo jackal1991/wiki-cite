@@ -165,3 +165,47 @@ def test_pending_revert_candidates_on_missing_store_returns_empty(tmp_path):
 
     store = SeenStore(path)
     assert store.pending_revert_candidates(horizon_days=7) == []
+
+
+def test_summary_counts_returns_tallies(tmp_path):
+    store = SeenStore(tmp_path / "seen.db")
+    store.record_outcome("Groveland Four", "1", "pushed")
+    store.record_outcome("Groveland Four", "1", "reverted")
+    store.record_outcome("Ocoee massacre", "2", "pushed")
+    store.record_outcome("Ocoee massacre", "2", "approved")
+    store.record_outcome("Rosewood, Florida", "3", "approved")
+    store.record_outcome("Rosewood, Florida", "3", "rejected")
+
+    assert store.summary_counts() == {
+        "pushed_articles": 2,
+        "reverted_articles": 1,
+        "approved_edits": 2,
+        "rejected_edits": 1,
+    }
+
+
+def test_summary_counts_distinct_per_article_not_per_row(tmp_path):
+    """Two pushed rows for the same article (multi-edit push) count as one article."""
+    store = SeenStore(tmp_path / "seen.db")
+    store.record_outcome("Groveland Four", "1", "pushed", edit_type="citation_added")
+    store.record_outcome("Groveland Four", "1", "pushed", edit_type="grammar_fix")
+
+    assert store.summary_counts()["pushed_articles"] == 1
+
+
+def test_summary_counts_empty_db_returns_zeros(tmp_path):
+    store = SeenStore(tmp_path / "seen.db")
+    assert store.summary_counts() == {
+        "pushed_articles": 0,
+        "reverted_articles": 0,
+        "approved_edits": 0,
+        "rejected_edits": 0,
+    }
+
+
+def test_summary_counts_on_missing_store_returns_empty(tmp_path):
+    path = tmp_path / "corrupt.db"
+    path.write_bytes(b"not a real sqlite database file")
+
+    store = SeenStore(path)
+    assert store.summary_counts() == {}

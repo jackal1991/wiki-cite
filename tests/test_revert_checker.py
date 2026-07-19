@@ -1,5 +1,6 @@
 """Tests for post-push revert detection."""
 
+import sqlite3
 from unittest.mock import Mock
 
 from wiki_cite.revert_checker import (
@@ -50,13 +51,32 @@ def test_check_article_for_revert_detects_newer_revert():
     assert check_article_for_revert(site, "Test Article", "12345") is True
 
 
+def test_check_article_for_revert_multiple_non_revert_revisions():
+    """Several ordinary edits after the anchor, none matching, walk to the end."""
+    site = Mock()
+    page = Mock()
+    page.revisions = Mock(
+        return_value=[
+            {"revid": 12345, "tags": [], "comment": ""},
+            {"revid": 12346, "tags": ["mw-visualeditor"], "comment": "typo"},
+            {"revid": 12347, "tags": [], "comment": "added a sentence"},
+        ]
+    )
+    site.pages = {"Test Article": page}
+
+    assert check_article_for_revert(site, "Test Article", "12345") is False
+
+
 def test_check_article_for_revert_non_numeric_revid_returns_false():
     site = Mock()
     assert check_article_for_revert(site, "Test Article", "not-a-number") is False
 
 
-def test_check_pending_reverts_records_reverted_row(tmp_path):
-    store = SeenStore(tmp_path / "seen.db")
+def test_check_pending_reverts_writes_reverted_row(tmp_path):
+    """AC2.1 end-to-end: a matched revert writes a "reverted" row and closes
+    the candidate loop (AC2.2 followthrough)."""
+    path = tmp_path / "seen.db"
+    store = SeenStore(path)
     store.record_outcome("Test Article", "12345", "pushed")
 
     site = Mock()
@@ -74,10 +94,17 @@ def test_check_pending_reverts_records_reverted_row(tmp_path):
     assert summary.checked == 1
     assert summary.reverts_found == 1
     assert summary.failures == []
+
+    conn = sqlite3.connect(str(path))
+    row = conn.execute("SELECT article_title, revision_id FROM outcomes WHERE outcome = 'reverted'").fetchone()
+    conn.close()
+    assert row == ("Test Article", "12345")
+
     assert store.pending_revert_candidates(horizon_days=7) == []
 
 
-def test_check_pending_reverts_no_match_leaves_candidate_pending(tmp_path):
+def test_check_pending_reverts_no_match_leaves_pending(tmp_path):
+    """AC2.2: no revert marker found → no "reverted" row, candidate stays pending."""
     store = SeenStore(tmp_path / "seen.db")
     store.record_outcome("Test Article", "12345", "pushed")
 
@@ -94,7 +121,7 @@ def test_check_pending_reverts_no_match_leaves_candidate_pending(tmp_path):
     assert store.pending_revert_candidates(horizon_days=7) == [("Test Article", "12345")]
 
 
-def test_check_pending_reverts_isolates_per_article_failures(tmp_path):
+def test_check_pending_reverts_isolates_failures(tmp_path):
     store = SeenStore(tmp_path / "seen.db")
     store.record_outcome("Bad Article", "1", "pushed")
     store.record_outcome("Good Article", "2", "pushed")
