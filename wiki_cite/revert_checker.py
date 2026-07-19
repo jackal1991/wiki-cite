@@ -16,13 +16,20 @@ from wiki_cite.seen_store import SeenStore
 
 logger = logging.getLogger(__name__)
 
-# MediaWiki tags applied to rollback/undo/manual-revert edits.
-REVERT_TAGS = frozenset({"mw-rollback", "mw-undo", "mw-manual-revert", "mw-reverted"})
+# MediaWiki tags applied to the reverting edit itself (rollback/undo/manual
+# revert action). Deliberately excludes `mw-reverted`, which MediaWiki applies
+# to the *victim* revision that got reverted, not the reverting edit — reading
+# it here would flag our own pushed revision as "reverted" whenever a later,
+# unrelated edit on top of it gets reverted, even though that later revert
+# effectively restores our edit.
+REVERT_TAGS = frozenset({"mw-rollback", "mw-undo", "mw-manual-revert"})
 
 # Conservative edit-summary substrings for reverts that land without one of the
 # tags above (e.g. a manual revert). Kept short and specific: a false positive
-# here writes a spurious "reverted" row that dents the revert rate.
-REVERT_SUMMARY_MARKERS = ("revert", "reverted", "rv ", "undo", "undid", "rollback", "restore")
+# here writes a spurious "reverted" row that dents the revert rate. "revert"
+# already covers "reverted" as a substring; "restore" is deliberately omitted
+# since it also matches legitimate summaries like "restored formatting".
+REVERT_SUMMARY_MARKERS = ("revert", "rv ", "undo", "undid", "rollback")
 
 
 class RevertCheckSummary(NamedTuple):

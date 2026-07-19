@@ -27,6 +27,19 @@ def test_is_revert_revision_no_tags_no_comment():
     assert is_revert_revision(None, None) is False
 
 
+def test_is_revert_revision_ignores_mw_reverted_victim_tag():
+    """`mw-reverted` marks the revision that GOT reverted (the victim), not the
+    reverting edit — it must not be read as a revert signal, or a later,
+    unrelated edit getting reverted would falsely flag our own pushed revision."""
+    assert is_revert_revision(["mw-reverted"], "added a sentence") is False
+
+
+def test_is_revert_revision_ignores_restore_summary():
+    """"restore" is deliberately not a marker — it also matches legitimate
+    summaries like "restored formatting" that are not reverts."""
+    assert is_revert_revision([], "restored formatting") is False
+
+
 def test_check_article_for_revert_skips_own_revision():
     site = Mock()
     page = Mock()
@@ -49,6 +62,26 @@ def test_check_article_for_revert_detects_newer_revert():
     site.pages = {"Test Article": page}
 
     assert check_article_for_revert(site, "Test Article", "12345") is True
+
+
+def test_check_article_for_revert_ignores_reverted_victim_tag_on_later_edit():
+    """Regression for the mw-reverted false positive: our edit is rev N. A later,
+    unrelated edit N+1 (by someone else) gets reverted at N+2, so N+1 carries
+    `mw-reverted` (the victim tag) — but N+1 is not itself an action tag and
+    N+2's own tags/comment carry no revert marker either, so our edit N was
+    never reverted and this must return False."""
+    site = Mock()
+    page = Mock()
+    page.revisions = Mock(
+        return_value=[
+            {"revid": 100, "tags": [], "comment": "our push"},
+            {"revid": 101, "tags": ["mw-reverted"], "comment": "editor X's unrelated edit"},
+            {"revid": 102, "tags": [], "comment": "editor Y manually retypes 101's prior text"},
+        ]
+    )
+    site.pages = {"Test Article": page}
+
+    assert check_article_for_revert(site, "Test Article", "100") is False
 
 
 def test_check_article_for_revert_multiple_non_revert_revisions():
