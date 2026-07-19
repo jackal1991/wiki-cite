@@ -1,8 +1,9 @@
 # Issue #19 — Pushed proposals never leave the queue list on the dashboard
 
-**Status:** In Progress
+**Status:** In Review
 **Complexity:** Simple
 **GitHub:** https://github.com/jackal1991/wiki-cite/issues/19
+**PR:** https://github.com/jackal1991/wiki-cite/pull/21
 
 ## Worktree
 
