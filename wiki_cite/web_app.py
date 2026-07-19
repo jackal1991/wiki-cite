@@ -17,7 +17,7 @@ from wiki_cite.config import get_config
 from wiki_cite.models import Article, EditProposal
 from wiki_cite.seen_store import SeenStore
 from wiki_cite.source_finder import SourceFinder, extract_citation_url
-from wiki_cite.stats import STATS_DIMENSIONS
+from wiki_cite.stats import STATS_DIMENSIONS, compute_summary
 from wiki_cite.wikipedia_push import WikipediaPushService
 
 # Maximum number of unresolved (status == "pending") proposals allowed in the
@@ -503,13 +503,14 @@ def create_app() -> Flask:
     @app.route("/stats")
     def stats_page():
         """Approval/success rates by dimension, aggregated from the outcomes table."""
-        store_ok, dimensions = True, {}
+        store_ok, dimensions, summary = True, {}, None
         try:
+            summary = compute_summary(seen_store.summary_counts())
             for dimension in STATS_DIMENSIONS:
                 dimensions[dimension] = {v: (s, t) for v, (s, t) in seen_store.dimension_rates(dimension).items() if t > 0}
         except sqlite3.Error:
             store_ok = False
-        return render_template("stats.html", dimensions=dimensions, store_ok=store_ok)
+        return render_template("stats.html", dimensions=dimensions, summary=summary, store_ok=store_ok)
 
     @app.route("/review/<proposal_id>")
     def review_proposal_page(proposal_id: str):

@@ -264,3 +264,27 @@ class SeenStore:
             return []
 
         return list(dict.fromkeys((title, revision_id) for title, revision_id in rows))
+
+    def summary_counts(self) -> dict[str, int]:
+        """Raw outcome tallies for the dashboard summary. Distinct-article counts
+        for pushed/reverted (an article is one push regardless of edit-row count),
+        raw row counts for approved/rejected (edit-grain review decisions)."""
+        if self._conn is None:
+            return {}
+
+        try:
+            with self._lock:
+                pushed_articles = self._conn.execute("SELECT COUNT(DISTINCT article_title) FROM outcomes WHERE outcome = 'pushed'").fetchone()[0]
+                reverted_articles = self._conn.execute("SELECT COUNT(DISTINCT article_title) FROM outcomes WHERE outcome = 'reverted'").fetchone()[0]
+                approved_edits = self._conn.execute("SELECT COUNT(*) FROM outcomes WHERE outcome = 'approved'").fetchone()[0]
+                rejected_edits = self._conn.execute("SELECT COUNT(*) FROM outcomes WHERE outcome = 'rejected'").fetchone()[0]
+        except sqlite3.Error:
+            logger.warning("Failed to read summary_counts", exc_info=True)
+            return {}
+
+        return {
+            "pushed_articles": pushed_articles,
+            "reverted_articles": reverted_articles,
+            "approved_edits": approved_edits,
+            "rejected_edits": rejected_edits,
+        }

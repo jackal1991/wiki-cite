@@ -228,6 +228,31 @@ def test_stats_route_renders_rates(app):
     assert b"1/1" in response.data
 
 
+def test_stats_summary_renders(app, tmp_path):
+    store = SeenStore(tmp_path / "seen.db")
+    store.record_outcome("Groveland Four", "123", "pushed")
+    store.record_outcome("Groveland Four", "123", "reverted")
+    store.record_outcome("Groveland Four", "123", "approved")
+    store.record_outcome("Groveland Four", "123", "rejected")
+    client = app.test_client()
+
+    response = client.get("/stats")
+
+    assert response.status_code == 200
+    assert b"Articles pushed" in response.data
+    assert b"100%" in response.data  # revert_rate: 1/1 reverted
+    assert b"1/1" in response.data  # approve/reject counts
+
+
+def test_stats_summary_empty_db(app):
+    client = app.test_client()
+
+    response = client.get("/stats")
+
+    assert response.status_code == 200
+    assert b"No pushes recorded yet." in response.data
+
+
 def test_stats_route_empty_db_no_error(app):
     client = app.test_client()
 
