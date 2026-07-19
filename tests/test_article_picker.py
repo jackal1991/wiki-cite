@@ -770,6 +770,68 @@ def test_no_topic_filter_output_and_requests_unchanged(mock_site):
     page.categories.assert_not_called()
 
 
+def test_evaluate_candidate_distrusts_batch_categories_when_flagged(picker):
+    """trust_batch_categories=False forces the per-page get_categories()
+    fallback even when page._info has a well-formed, seemingly-complete
+    categories list — this is how fetch_candidates protects against a
+    silently truncated batch (see the truncated-batch test below)."""
+    page = _make_page("Flagged", cats=["Sports"], batch=True)
+    page.categories = Mock(return_value=[_mock_category("Category:History")])
+
+    ok, _, _, categories = picker._evaluate_candidate(page, ["History"], [], trust_batch_categories=False)
+
+    assert ok is True
+    assert categories == ["History"]
+    page.categories.assert_called_once()
+
+
+def test_fetch_candidates_truncated_batch_forces_fallback(mock_site):
+    """Realistic truncated-batch shape, confirmed against the live API: a
+    500-page generator batch commonly exceeds cllimit=max well before every
+    page's categories are listed (verified: ~20-30/500 pages get any
+    categories data per round for a busy category), so MediaWiki returns a
+    TOP-LEVEL clcontinue that mwclient echoes back into cat_page.args — never
+    into any individual page's _info. A page caught by that cutoff has a
+    well-formed but silently PARTIAL categories list with no per-page marker
+    of its own. Once cat_page.args shows clcontinue, fetch_candidates must
+    distrust every page's batch categories for the rest of this fetch and use
+    the per-page fallback, or an off-topic-looking (but actually on-topic)
+    page could be wrongly rejected on incomplete data."""
+    picker = ArticlePicker(site=mock_site)
+    cat_page = Mock()
+    cat_page.args = {"clcontinue": "12345|SomeCategory"}  # truncation already flagged
+
+    # _info looks complete (a well-formed list) but is missing "History" —
+    # only the per-page fallback's full list has it.
+    page = _make_page("Boundary Page", cats=["Sports"], batch=True)
+    page.categories = Mock(return_value=[_mock_category("Category:Sports"), _mock_category("Category:History")])
+    cat_page.__iter__ = Mock(return_value=iter([page]))
+    mock_site.pages = {"Category:All_articles_with_unsourced_statements": cat_page}
+
+    titles = [c.title for c in picker.fetch_candidates(limit=5, include_categories=["History"])]
+
+    # Trusting the truncated batch list (["Sports"]) would wrongly reject this
+    # page; the fallback's full list (["Sports", "History"]) correctly accepts it.
+    assert "Boundary Page" in titles
+    page.categories.assert_called_once()
+
+
+def test_fetch_candidates_dedupes_pages_reyielded_across_continuation_rounds(mock_site):
+    """mwclient re-yields the same page across clcontinue continuation
+    rounds when a batch's categories sub-query is truncated (live-confirmed:
+    a repeated request with the same clcontinue token returns the identical
+    ~500-page batch again, not new pages) — an in-memory title dedup guards
+    against double-processing and duplicate candidates within one fetch."""
+    picker = ArticlePicker(site=mock_site)
+    page = _make_page("Repeated Page", cats=["History"])
+    mock_site.pages = {"Category:All_articles_with_unsourced_statements": [page, page]}
+
+    candidates = list(picker.fetch_candidates(limit=5))
+
+    assert [c.title for c in candidates] == ["Repeated Page"]
+    page.text.assert_called_once()
+
+
 @pytest.fixture
 def restore_config():
     """Config is global (get_config/set_config); restore it after tests that override it."""
