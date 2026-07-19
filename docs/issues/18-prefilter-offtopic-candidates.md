@@ -1,8 +1,9 @@
 # Issue #18 — Pre-filter off-topic candidates before per-page fetches in fetch_candidates()
 
-**Status:** In Progress
+**Status:** In Review
 **Complexity:** Complex
 **GitHub:** https://github.com/jackal1991/wiki-cite/issues/18
+**PR:** https://github.com/jackal1991/wiki-cite/pull/24
 
 ## Worktree
 
