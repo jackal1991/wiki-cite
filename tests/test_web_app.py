@@ -344,3 +344,37 @@ def test_push_frees_a_slot(app):
     response = client.get("/api/proposals/pending-count").get_json()
 
     assert response == {"pending": 9, "cap": 10, "at_cap": False}
+
+
+def test_get_proposals_excludes_pushed_and_rejected(app):
+    pending = make_proposal()
+    pending.id = "pending-1"
+    pushed = make_proposal()
+    pushed.id = "pushed-1"
+    pushed.status = "pushed"
+    rejected = make_proposal()
+    rejected.id = "rejected-1"
+    rejected.status = "rejected"
+    app.proposals[pending.id] = pending
+    app.proposals[pushed.id] = pushed
+    app.proposals[rejected.id] = rejected
+    client = app.test_client()
+
+    response = client.get("/api/proposals")
+
+    assert response.status_code == 200
+    ids = [p["id"] for p in response.get_json()]
+    assert ids == ["pending-1"]
+
+
+def test_get_proposal_by_id_still_reachable_after_push(app):
+    pushed = make_proposal()
+    pushed.id = "pushed-1"
+    pushed.status = "pushed"
+    app.proposals[pushed.id] = pushed
+    client = app.test_client()
+
+    response = client.get("/api/proposals/pushed-1")
+
+    assert response.status_code == 200
+    assert response.get_json()["status"] == "pushed"

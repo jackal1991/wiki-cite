@@ -576,15 +576,13 @@
 
     // ---------- Queue rendering ----------
     function proposalCard(p) {
-        const isPushed = p.status === 'pushed';
-        const statusClass = isPushed ? 'status-pill pushed' : 'status-pill';
         const created = p.created_at ? new Date(p.created_at).toLocaleString() : '';
         return `
             <div class="queue-item">
                 <div style="flex:1; min-width:0;">
                     <div class="title-row">
                         <a href="${escapeHtml(p.url)}" target="_blank" class="title-link">${escapeHtml(p.title)}</a>
-                        <span class="${statusClass}">${escapeHtml(p.status)}</span>
+                        <span class="status-pill">${escapeHtml(p.status)}</span>
                     </div>
                     <div class="queue-meta">
                         <span><strong>${p.edit_count}</strong> proposed edits</span>
